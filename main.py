@@ -1,19 +1,33 @@
 """
 DocMind — Local Document Intelligence Desktop Application
 
-Entry point: initializes the PyQt6 application with dark theme and launches the main window.
+Entry point: initialises logging, runs startup checks, then launches
+the PyQt6 main window with a dark theme.
+
+Startup sequence
+----------------
+1. Create ``QApplication`` (required before any Qt widgets are shown).
+2. Run :func:`utils.startup_checks.perform_startup_checks` — this:
+   a. Creates all writable data directories under ``%APPDATA%\\DocMind``.
+   b. Initialises the rotating log file.
+   c. Verifies the SQLite database is accessible.
+   d. Displays user-friendly dialogs on failure and returns ``False``.
+3. Show ``MainWindow`` and enter the Qt event loop.
+4. Top-level exception handler catches anything unforeseen, writes a
+   crash log and shows a friendly error dialog.
 """
+from __future__ import annotations
+
 import sys
+import traceback
 from pathlib import Path
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont, QPalette, QColor
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtGui import QFont, QIcon, QPalette, QColor
+from PyQt6.QtWidgets import QApplication, QMessageBox
 
-# Ensure the project root is importable
+# Ensure the project root is importable when running from source
 sys.path.insert(0, str(Path(__file__).parent))
-
-from gui.main_window import MainWindow
 
 
 # ── Global dark theme stylesheet ──────────────────────────────────────
@@ -153,30 +167,80 @@ QMessageBox QPushButton:hover {
 """
 
 
-def main():
-    # Enable high-DPI scaling
-    app = QApplication(sys.argv)
+def _apply_dark_palette(app: QApplication) -> None:
+    """Apply the DocMind dark colour palette to the application."""
     app.setStyle("Fusion")
-
-    # Dark palette
     palette = QPalette()
-    palette.setColor(QPalette.ColorRole.Window, QColor("#0d1117"))
-    palette.setColor(QPalette.ColorRole.WindowText, QColor("#e6edf3"))
-    palette.setColor(QPalette.ColorRole.Base, QColor("#0d1117"))
-    palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#161b22"))
-    palette.setColor(QPalette.ColorRole.Text, QColor("#e6edf3"))
-    palette.setColor(QPalette.ColorRole.Button, QColor("#21262d"))
-    palette.setColor(QPalette.ColorRole.ButtonText, QColor("#e6edf3"))
-    palette.setColor(QPalette.ColorRole.Highlight, QColor("#1f6feb"))
+    palette.setColor(QPalette.ColorRole.Window,          QColor("#0d1117"))
+    palette.setColor(QPalette.ColorRole.WindowText,      QColor("#e6edf3"))
+    palette.setColor(QPalette.ColorRole.Base,            QColor("#0d1117"))
+    palette.setColor(QPalette.ColorRole.AlternateBase,   QColor("#161b22"))
+    palette.setColor(QPalette.ColorRole.Text,            QColor("#e6edf3"))
+    palette.setColor(QPalette.ColorRole.Button,          QColor("#21262d"))
+    palette.setColor(QPalette.ColorRole.ButtonText,      QColor("#e6edf3"))
+    palette.setColor(QPalette.ColorRole.Highlight,       QColor("#1f6feb"))
     palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
     app.setPalette(palette)
-
     app.setStyleSheet(GLOBAL_STYLESHEET)
 
-    window = MainWindow()
-    window.show()
 
-    sys.exit(app.exec())
+def _set_app_icon(app: QApplication) -> None:
+    """Set the application window icon from bundled assets."""
+    try:
+        from utils.app_paths import ASSETS_DIR
+        # Try .ico first (Windows), fall back to .png
+        for name in ("DocMind.ico", "DocMind.png"):
+            icon_path = ASSETS_DIR / name
+            if icon_path.exists():
+                app.setWindowIcon(QIcon(str(icon_path)))
+                return
+    except Exception:
+        pass  # Icon is cosmetic — never crash over it
+
+
+def main() -> None:
+    """Application entry point."""
+    app = QApplication(sys.argv)
+
+    # ── Theme & icon ──────────────────────────────────────────────────
+    _apply_dark_palette(app)
+    _set_app_icon(app)
+
+    # ── Startup checks ────────────────────────────────────────────────
+    # Imports are deferred so Qt is available before any path resolution
+    from utils.startup_checks import perform_startup_checks
+    if not perform_startup_checks():
+        sys.exit(1)
+
+    # ── Launch main window ────────────────────────────────────────────
+    from utils.logger import get_logger
+    log = get_logger(__name__)
+
+    try:
+        from gui.main_window import MainWindow
+        window = MainWindow()
+        window.show()
+        log.info("MainWindow displayed — entering event loop")
+        exit_code = app.exec()
+        log.info("Event loop exited with code %d", exit_code)
+        sys.exit(exit_code)
+
+    except Exception as exc:  # noqa: BLE001
+        # Catch-all: log the full traceback then show a friendly dialog
+        tb = traceback.format_exc()
+        log.critical("Unhandled exception in main: %s\n%s", exc, tb)
+
+        box = QMessageBox()
+        box.setWindowTitle("DocMind — Unexpected Error")
+        box.setIcon(QMessageBox.Icon.Critical)
+        box.setText(
+            "DocMind encountered an unexpected error and cannot continue.\n\n"
+            f"{exc}\n\n"
+            "The full error has been saved to the application log."
+        )
+        box.setDetailedText(tb)
+        box.exec()
+        sys.exit(1)
 
 
 if __name__ == "__main__":

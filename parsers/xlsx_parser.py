@@ -19,16 +19,14 @@ class XlsxParser(BaseParser):
 
         for sheet_name in wb.sheetnames:
             ws = wb[sheet_name]
-            parts.append(f"--- Sheet: {sheet_name} ---")
-            for row in ws.iter_rows(values_only=True):
-                cells = [str(c) for c in row if c is not None]
-                if cells:
-                    parts.append(" | ".join(cells))
+            for row in ws.iter_rows(values_only=False):
+                for cell in row:
+                    if cell.value is not None and str(cell.value).strip() != "":
+                        parts.append(f"{sheet_name}\t{cell.coordinate}\t{str(cell.value).strip()}")
 
         wb.close()
 
-        if len(parts) <= len(wb.sheetnames):
-            # Only sheet headers, no actual data
+        if not parts:
             raise ValueError(f"XLSX '{file_path.name}' contains no extractable data.")
 
         return "\n".join(parts)

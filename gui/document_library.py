@@ -1,16 +1,20 @@
 """Document library — sortable table of all imported documents."""
 from datetime import datetime
+from pathlib import Path
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QAction, QFont
+from PyQt6.QtGui import QAction, QFont, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
     QMenu,
+    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -25,7 +29,8 @@ from services.document_service import DocumentService
 class DocumentLibrary(QWidget):
     """Sortable, filterable document table."""
 
-    import_requested = pyqtSignal()
+    select_folder_requested = pyqtSignal()
+    refresh_folder_requested = pyqtSignal()
     document_open = pyqtSignal(str)        # doc_id
     document_stats = pyqtSignal(str)       # doc_id
     document_deleted = pyqtSignal(str)     # doc_id
@@ -51,19 +56,56 @@ class DocumentLibrary(QWidget):
         header.addWidget(title)
         header.addStretch()
 
-        import_btn = QPushButton("  Import Files")
-        import_btn.setObjectName("primaryButton")
-        import_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        import_btn.setFont(QFont("Segoe UI", 12, QFont.Weight.DemiBold))
-        import_btn.setMinimumHeight(42)
-        import_btn.setMinimumWidth(160)
-        import_btn.clicked.connect(self.import_requested.emit)
-        header.addWidget(import_btn)
+        refresh_btn = QPushButton("  Refresh Folder")
+        refresh_btn.setObjectName("secondaryButton")
+        refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        refresh_btn.setFont(QFont("Segoe UI", 12, QFont.Weight.DemiBold))
+        refresh_btn.setMinimumHeight(42)
+        refresh_btn.setMinimumWidth(160)
+        refresh_btn.clicked.connect(self.refresh_folder_requested.emit)
+        header.addWidget(refresh_btn)
+
+        select_folder_btn = QPushButton("  Select Folder")
+        select_folder_btn.setObjectName("primaryButton")
+        select_folder_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        select_folder_btn.setFont(QFont("Segoe UI", 12, QFont.Weight.DemiBold))
+        select_folder_btn.setMinimumHeight(42)
+        select_folder_btn.setMinimumWidth(160)
+        select_folder_btn.clicked.connect(self.select_folder_requested.emit)
+        header.addWidget(select_folder_btn)
         layout.addLayout(header)
 
         # ── Toolbar ───────────────────────────────────────────────────
         toolbar = QHBoxLayout()
         toolbar.setSpacing(10)
+
+        self._delete_btn = QPushButton("🗑️  Delete")
+        self._delete_btn.setObjectName("deleteButton")
+        self._delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._delete_btn.setFont(QFont("Segoe UI", 12))
+        self._delete_btn.setMinimumHeight(36)
+        self._delete_btn.setEnabled(False)
+        self._delete_btn.setStyleSheet(
+            """
+            QPushButton#deleteButton {
+                background: #21262d;
+                color: #f85149;
+                border: 1px solid #30363d;
+                border-radius: 8px;
+                padding: 6px 16px;
+            }
+            QPushButton#deleteButton:hover {
+                background: #3d0c0c;
+                border-color: #f85149;
+            }
+            QPushButton#deleteButton:disabled {
+                color: #484f58;
+                border-color: #21262d;
+            }
+            """
+        )
+        self._delete_btn.clicked.connect(self._delete_selected)
+        toolbar.addWidget(self._delete_btn)
 
         self._filter_input = QLineEdit()
         self._filter_input.setPlaceholderText("🔍  Filter by filename...")
@@ -142,6 +184,7 @@ class DocumentLibrary(QWidget):
         self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._table.customContextMenuRequested.connect(self._show_context_menu)
         self._table.doubleClicked.connect(self._on_double_click)
+        self._table.itemSelectionChanged.connect(self._on_selection_changed)
 
         header_view = self._table.horizontalHeader()
         header_view.setStretchLastSection(True)
@@ -185,12 +228,19 @@ class DocumentLibrary(QWidget):
         layout.addWidget(self._table, 1)
 
         # Empty state
-        self._empty_label = QLabel("📂  Your library is empty.\nImport documents to get started.")
+        self._empty_label = QLabel(
+            "📂  No documents indexed yet.\n\n"
+            "Click \"Select Folder\" to begin indexing research papers."
+        )
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_label.setFont(QFont("Segoe UI", 14))
-        self._empty_label.setStyleSheet("color: #484f58; padding: 60px;")
+        self._empty_label.setStyleSheet("color: #484f58; padding: 60px; line-height: 1.6;")
         self._empty_label.setVisible(False)
         layout.addWidget(self._empty_label)
+
+        # ── Keyboard shortcut: Delete key ─────────────────────────────
+        delete_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Delete), self._table)
+        delete_shortcut.activated.connect(self._delete_selected)
 
     # ── Data ──────────────────────────────────────────────────────────
 
@@ -198,6 +248,12 @@ class DocumentLibrary(QWidget):
         """Reload all documents from the database."""
         self._docs = self._service.get_all_documents()
         self._apply_sort(self._sort_combo.currentText())
+        self._on_selection_changed()  # update delete button state
+
+    def _on_selection_changed(self):
+        """Enable/disable delete button based on row selection."""
+        has_selection = len(self._table.selectedItems()) > 0
+        self._delete_btn.setEnabled(has_selection)
 
     def _populate_table(self, docs: list[Document]):
         """Fill the table with the given document list."""
@@ -212,7 +268,7 @@ class DocumentLibrary(QWidget):
         self._empty_label.setVisible(False)
         self._table.setRowCount(len(docs))
 
-        icon_map = {".pdf": "📕", ".docx": "📘", ".xlsx": "📗", ".txt": "📄"}
+        icon_map = {".pdf": "📕", ".docx": "📘", ".xlsx": "📗", ".xls": "📗", ".txt": "📄"}
 
         for row, doc in enumerate(docs):
             icon = icon_map.get(doc.file_type, "📄")
@@ -317,7 +373,149 @@ class DocumentLibrary(QWidget):
             if doc_id:
                 self.document_open.emit(doc_id)
 
+    def _delete_selected(self):
+        """Delete the currently selected row (called from toolbar button or Delete key)."""
+        rows = self._table.selectedItems()
+        if not rows:
+            return
+        row = self._table.currentRow()
+        item = self._table.item(row, 0)
+        if not item:
+            return
+        doc_id = item.data(Qt.ItemDataRole.UserRole)
+        if doc_id:
+            self._delete_document(doc_id)
+
     def _delete_document(self, doc_id: str):
-        self._service.delete_document(doc_id)
+        """Show confirmation dialog then delete document and all associated data."""
+        doc = self._service.get_document(doc_id)
+        if doc is None:
+            return
+
+        # ── Confirmation dialog ───────────────────────────────────────
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Delete Document")
+        dlg.setFixedWidth(440)
+        dlg.setStyleSheet(
+            """
+            QDialog {
+                background: #161b22;
+                border-radius: 12px;
+            }
+            QLabel {
+                background: transparent;
+                color: #e6edf3;
+            }
+            """
+        )
+
+        dlg_layout = QVBoxLayout(dlg)
+        dlg_layout.setContentsMargins(28, 24, 28, 24)
+        dlg_layout.setSpacing(16)
+
+        # Warning icon + title
+        title_row = QHBoxLayout()
+        icon_lbl = QLabel("🗑️")
+        icon_lbl.setFont(QFont("Segoe UI Emoji", 22))
+        icon_lbl.setStyleSheet("background: transparent;")
+        title_row.addWidget(icon_lbl)
+
+        title_lbl = QLabel("Delete Document")
+        title_lbl.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
+        title_lbl.setStyleSheet("color: #f85149; background: transparent;")
+        title_row.addWidget(title_lbl)
+        title_row.addStretch()
+        dlg_layout.addLayout(title_row)
+
+        # Message
+        msg_lbl = QLabel("Are you sure you want to permanently remove this document from DocMind?")
+        msg_lbl.setWordWrap(True)
+        msg_lbl.setFont(QFont("Segoe UI", 13))
+        msg_lbl.setStyleSheet("color: #8b949e; background: transparent;")
+        dlg_layout.addWidget(msg_lbl)
+
+        # Filename
+        fname_lbl = QLabel(doc.filename)
+        fname_lbl.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
+        fname_lbl.setStyleSheet(
+            "color: #e6edf3; background: #21262d; border: 1px solid #30363d;"
+            " border-radius: 6px; padding: 8px 12px;"
+        )
+        fname_lbl.setWordWrap(True)
+        dlg_layout.addWidget(fname_lbl)
+
+        # Buttons
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setFont(QFont("Segoe UI", 13))
+        cancel_btn.setMinimumHeight(38)
+        cancel_btn.setMinimumWidth(100)
+        cancel_btn.setStyleSheet(
+            """
+            QPushButton {
+                background: #21262d;
+                color: #e6edf3;
+                border: 1px solid #30363d;
+                border-radius: 8px;
+                padding: 6px 20px;
+            }
+            QPushButton:hover { background: #30363d; border-color: #484f58; }
+            """
+        )
+        cancel_btn.clicked.connect(dlg.reject)
+        btn_row.addWidget(cancel_btn)
+
+        delete_btn = QPushButton("Delete")
+        delete_btn.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
+        delete_btn.setMinimumHeight(38)
+        delete_btn.setMinimumWidth(100)
+        delete_btn.setStyleSheet(
+            """
+            QPushButton {
+                background: #da3633;
+                color: #ffffff;
+                border: none;
+                border-radius: 8px;
+                padding: 6px 20px;
+            }
+            QPushButton:hover { background: #f85149; }
+            QPushButton:pressed { background: #b91c1c; }
+            """
+        )
+        delete_btn.clicked.connect(dlg.accept)
+        btn_row.addWidget(delete_btn)
+
+        dlg_layout.addLayout(btn_row)
+
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        # ── Perform deletion ──────────────────────────────────────────
+        try:
+            success = self._service.delete_document(doc_id)
+        except PermissionError:
+            QMessageBox.critical(
+                self, "Deletion Failed",
+                f"Cannot delete '{doc.filename}'.\n\n"
+                "The file appears to be open or locked by another program.\n"
+                "Please close it and try again."
+            )
+            return
+        except OSError as exc:
+            QMessageBox.critical(
+                self, "Deletion Failed",
+                f"Could not delete '{doc.filename}':\n\n{exc}"
+            )
+            return
+
+        if not success:
+            QMessageBox.warning(
+                self, "Not Found",
+                "The document record was not found in the database."
+            )
+            return
+
         self.document_deleted.emit(doc_id)
         self.refresh()

@@ -1,10 +1,21 @@
 """DocMind SQLite database manager."""
 import sqlite3
+import sys
 import threading
 from pathlib import Path
 from typing import Optional
 
 from database.models import Document
+from utils.app_paths import DB_PATH, STORAGE_DIR
+
+
+def get_storage_dir() -> Path:
+    """Get persistent storage directory.
+
+    Delegates to :mod:`utils.app_paths` so that both source and frozen
+    (PyInstaller) modes resolve to ``%APPDATA%\\DocMind\\storage``.
+    """
+    return STORAGE_DIR
 
 
 class DatabaseManager:
@@ -23,7 +34,7 @@ class DatabaseManager:
     def __init__(self, db_path: Optional[Path] = None):
         if self._initialized:
             return
-        self._db_path = db_path or Path(__file__).parent.parent / "storage" / "docmind.db"
+        self._db_path = db_path or DB_PATH
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._local = threading.local()
         self._initialized = True
@@ -42,7 +53,7 @@ class DatabaseManager:
         return self._local.connection
 
     def _create_tables(self):
-        """Create the documents table and indexes."""
+        """Create the documents table, settings, and indexes."""
         self._conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS documents (
@@ -58,15 +69,42 @@ class DatabaseManager:
                 char_count INTEGER DEFAULT 0,
                 line_count INTEGER DEFAULT 0,
                 extracted_text TEXT DEFAULT '',
+                sha256 TEXT DEFAULT '',
                 created_at TEXT NOT NULL
             );
 
             CREATE INDEX IF NOT EXISTS idx_filename ON documents(filename);
             CREATE INDEX IF NOT EXISTS idx_file_type ON documents(file_type);
             CREATE INDEX IF NOT EXISTS idx_created_at ON documents(created_at);
+
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS search_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                query TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS chat_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                prompt TEXT NOT NULL,
+                response TEXT NOT NULL,
+                citations TEXT DEFAULT '',
+                created_at TEXT NOT NULL
+            );
             """
         )
         self._conn.commit()
+
+        # Run migration for sha256 column
+        try:
+            self._conn.execute("ALTER TABLE documents ADD COLUMN sha256 TEXT DEFAULT ''")
+            self._conn.commit()
+        except sqlite3.OperationalError:
+            pass  # Already exists
 
     # ── CRUD ──────────────────────────────────────────────────────────
 
@@ -77,8 +115,8 @@ class DatabaseManager:
             INSERT INTO documents
                 (id, filename, original_path, stored_path, extracted_text_path,
                  file_type, file_size, word_count, unique_words, char_count,
-                 line_count, extracted_text, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 line_count, sha256, extracted_text, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 doc.id,
@@ -92,6 +130,7 @@ class DatabaseManager:
                 doc.unique_words,
                 doc.char_count,
                 doc.line_count,
+                doc.sha256,
                 extracted_text,
                 doc.created_at,
             ),
@@ -155,20 +194,20 @@ class DatabaseManager:
         ).fetchone()
         return row["cnt"]
 
-    def search_content(self, query: str) -> list[tuple[str, str, str]]:
+    def search_content(self, query: str) -> list[tuple[str, str, str, str]]:
         """
         Basic content search using SQLite LIKE.
-        Returns list of (id, filename, extracted_text).
+        Returns list of (id, filename, file_type, extracted_text).
         """
         rows = self._conn.execute(
             """
-            SELECT id, filename, extracted_text
+            SELECT id, filename, file_type, extracted_text
             FROM documents
             WHERE extracted_text LIKE ?
             """,
             (f"%{query}%",),
         ).fetchall()
-        return [(r["id"], r["filename"], r["extracted_text"]) for r in rows]
+        return [(r["id"], r["filename"], r["file_type"], r["extracted_text"]) for r in rows]
 
     def update_stats(
         self, doc_id: str, word_count: int, unique_words: int,
@@ -184,6 +223,53 @@ class DatabaseManager:
             (word_count, unique_words, char_count, line_count, doc_id),
         )
         self._conn.commit()
+
+    def get_document_by_path(self, original_path: str) -> Optional[Document]:
+        """Fetch a single document by its original source path."""
+        row = self._conn.execute(
+            "SELECT * FROM documents WHERE original_path = ?", (original_path,)
+        ).fetchone()
+        return self._row_to_document(row) if row else None
+
+    def check_duplicate(self, original_path: str, sha256: str) -> str:
+        """
+        Check if a document already exists by path and hash.
+        Returns:
+            'skip': if both path and hash match the same document
+            'update': if path matches but hash is different (file was modified)
+            'skip_hash': if hash matches but path is different (duplicate content)
+            'new': if neither path nor hash match
+        """
+        row_path = self._conn.execute(
+            "SELECT id, sha256 FROM documents WHERE original_path = ?", (original_path,)
+        ).fetchone()
+        if row_path:
+            if row_path["sha256"] == sha256:
+                return "skip"
+            else:
+                return "update"
+
+        row_hash = self._conn.execute(
+            "SELECT id FROM documents WHERE sha256 = ?", (sha256,)
+        ).fetchone()
+        if row_hash:
+            return "skip_hash"
+
+        return "new"
+
+    def set_setting(self, key: str, value: str) -> None:
+        """Save a key-value setting."""
+        self._conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value)
+        )
+        self._conn.commit()
+
+    def get_setting(self, key: str) -> Optional[str]:
+        """Retrieve a key-value setting."""
+        row = self._conn.execute(
+            "SELECT value FROM settings WHERE key = ?", (key,)
+        ).fetchone()
+        return row["value"] if row else None
 
     # ── Helpers ───────────────────────────────────────────────────────
 
@@ -202,6 +288,7 @@ class DatabaseManager:
             unique_words=row["unique_words"],
             char_count=row["char_count"],
             line_count=row["line_count"],
+            sha256=row["sha256"] if "sha256" in row.keys() else "",
             created_at=row["created_at"],
         )
 
@@ -210,3 +297,52 @@ class DatabaseManager:
         if hasattr(self._local, "connection") and self._local.connection:
             self._local.connection.close()
             self._local.connection = None
+
+    # ── History Helpers ───────────────────────────────────────────────
+
+    def add_search_history(self, query: str) -> None:
+        """Insert a search query into history."""
+        from datetime import datetime
+        self._conn.execute(
+            "INSERT INTO search_history (query, created_at) VALUES (?, ?)",
+            (query, datetime.now().isoformat()),
+        )
+        self._conn.commit()
+
+    def get_search_history(self, limit: int = 20) -> list[dict]:
+        """Fetch search queries from history."""
+        rows = self._conn.execute(
+            "SELECT * FROM search_history ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [{"id": r["id"], "query": r["query"], "created_at": r["created_at"]} for r in rows]
+
+    def add_chat_history(self, prompt: str, response: str, citations: str = "") -> None:
+        """Insert an AI chat turn into history."""
+        from datetime import datetime
+        self._conn.execute(
+            "INSERT INTO chat_history (prompt, response, citations, created_at) VALUES (?, ?, ?, ?)",
+            (prompt, response, citations, datetime.now().isoformat()),
+        )
+        self._conn.commit()
+
+    def get_chat_history(self, limit: int = 50) -> list[dict]:
+        """Fetch chat history."""
+        rows = self._conn.execute(
+            "SELECT * FROM chat_history ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [
+            {
+                "id": r["id"],
+                "prompt": r["prompt"],
+                "response": r["response"],
+                "citations": r["citations"],
+                "created_at": r["created_at"],
+            }
+            for r in rows
+        ]
+
+    def clear_all_history(self) -> None:
+        """Clear all search and chat history."""
+        self._conn.execute("DELETE FROM search_history")
+        self._conn.execute("DELETE FROM chat_history")
+        self._conn.commit()

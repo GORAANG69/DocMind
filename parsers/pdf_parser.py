@@ -31,7 +31,7 @@ class PdfParser(BaseParser):
         if not pages:
             raise ValueError(f"PDF '{file_path.name}' contains no extractable text.")
 
-        return "\n\n".join(pages)
+        return "\f".join(pages)
 
     @staticmethod
     def supported_extensions() -> list[str]:

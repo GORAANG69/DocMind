@@ -20,6 +20,7 @@ class DocumentViewer(QWidget):
     """Read-only document viewer with in-text search and highlight."""
 
     back_requested = pyqtSignal()
+    delete_requested = pyqtSignal(str)  # doc_id
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -47,6 +48,31 @@ class DocumentViewer(QWidget):
         self._title_label.setFont(QFont("Segoe UI", 20, QFont.Weight.Bold))
         self._title_label.setStyleSheet("color: #e6edf3;")
         top_bar.addWidget(self._title_label, 1)
+
+        # Delete button in viewer
+        self._delete_btn = QPushButton("🗑️  Delete")
+        self._delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._delete_btn.setFont(QFont("Segoe UI", 12))
+        self._delete_btn.setMinimumHeight(36)
+        self._delete_btn.setVisible(False)  # hidden until a doc is loaded
+        self._delete_btn.setStyleSheet(
+            """
+            QPushButton {
+                background: #21262d;
+                color: #f85149;
+                border: 1px solid #30363d;
+                border-radius: 8px;
+                padding: 6px 16px;
+            }
+            QPushButton:hover {
+                background: #3d0c0c;
+                border-color: #f85149;
+            }
+            """
+        )
+        self._delete_btn.clicked.connect(self._on_delete_clicked)
+        top_bar.addWidget(self._delete_btn)
+
         layout.addLayout(top_bar)
 
         # ── Metadata bar ─────────────────────────────────────────────
@@ -152,12 +178,13 @@ class DocumentViewer(QWidget):
 
     # ── Public API ────────────────────────────────────────────────────
 
-    def load_document(self, doc_id: str):
-        """Load and display a document by its ID."""
+    def load_document(self, doc_id: str, query: str = "", page_number = None, sheet_name = None, cell_ref = None):
+        """Load and display a document by its ID, with optional query highlighting and location scrolling."""
         doc = self._service.get_document(doc_id)
         if doc is None:
             self._title_label.setText("Document not found")
             self._text_edit.clear()
+            self._delete_btn.setVisible(False)
             return
 
         self._current_doc = doc
@@ -166,13 +193,63 @@ class DocumentViewer(QWidget):
         self._meta_size.setText(f"Size: {doc.file_size_display}")
         self._meta_words.setText(f"Words: {doc.word_count:,}")
         self._meta_reading.setText(f"Reading: ~{doc.reading_time_minutes} min")
+        self._delete_btn.setVisible(True)
 
         text = self._service.get_extracted_text(doc_id)
-        self._text_edit.setPlainText(text)
+        
+        # Format text depending on file type to display coordinates cleanly
+        if doc.file_type == ".pdf":
+            pages = text.split("\f")
+            formatted_parts = []
+            for idx, page_text in enumerate(pages, 1):
+                formatted_parts.append(f"--- Page {idx} ---\n{page_text}")
+            text_to_show = "\n\n".join(formatted_parts)
+        elif doc.file_type in (".xlsx", ".xls"):
+            lines = text.split("\n")
+            formatted_parts = []
+            current_sheet = None
+            for line in lines:
+                if not line.strip():
+                    continue
+                parts = line.split("\t", 2)
+                if len(parts) == 3:
+                    sh, ref, val = parts
+                    if sh != current_sheet:
+                        current_sheet = sh
+                        formatted_parts.append(f"\n=== Sheet: {current_sheet} ===")
+                    formatted_parts.append(f"[{ref}] {val}")
+            text_to_show = "\n".join(formatted_parts)
+        else:
+            text_to_show = text
+
+        self._text_edit.setPlainText(text_to_show)
         self._search_input.clear()
         self._match_label.setText("")
 
+        if query:
+            self._search_input.setText(query)
+            
+            # Scroll to coordinate target
+            if doc.file_type == ".pdf" and page_number is not None:
+                self._scroll_to_text(f"--- Page {page_number} ---")
+            elif doc.file_type in (".xlsx", ".xls") and sheet_name is not None and cell_ref is not None:
+                # Find cell reference under sheet context
+                self._scroll_to_text(f"[{cell_ref}]")
+
+    def _scroll_to_text(self, target_str: str):
+        """Find target string in document and scroll cursor to it."""
+        document = self._text_edit.document()
+        cursor = document.find(target_str)
+        if not cursor.isNull():
+            self._text_edit.setTextCursor(cursor)
+            self._text_edit.ensureCursorVisible()
+
     # ── In-document search ────────────────────────────────────────────
+
+    def _on_delete_clicked(self):
+        """Emit delete_requested for the currently loaded document."""
+        if self._current_doc:
+            self.delete_requested.emit(self._current_doc.id)
 
     def _highlight_matches(self, query: str):
         """Highlight all occurrences of query in the text."""
@@ -192,8 +269,8 @@ class DocumentViewer(QWidget):
             return
 
         highlight_fmt = QTextCharFormat()
-        highlight_fmt.setBackground(QColor("#5e4b00"))
-        highlight_fmt.setForeground(QColor("#ffd33d"))
+        highlight_fmt.setBackground(QColor("#ffd33d")) # Premium bright yellow
+        highlight_fmt.setForeground(QColor("#0d1117")) # Dark text for contrast
 
         document = self._text_edit.document()
         cursor = QTextCursor(document)

@@ -20,6 +20,7 @@ class Document:
     unique_words: int = 0
     char_count: int = 0
     line_count: int = 0
+    sha256: str = ""
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
     @property

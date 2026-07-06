@@ -64,9 +64,10 @@ class StatCard(QFrame):
 
 
 class DashboardPage(QWidget):
-    """Main dashboard with stats, recent docs, and import button."""
+    """Main dashboard with stats, recent docs, and folder actions."""
 
-    import_requested = pyqtSignal()
+    select_folder_requested = pyqtSignal()
+    refresh_folder_requested = pyqtSignal()
     document_selected = pyqtSignal(str)  # doc_id
 
     def __init__(self, parent=None):
@@ -87,14 +88,23 @@ class DashboardPage(QWidget):
         header_layout.addWidget(title)
         header_layout.addStretch()
 
-        import_btn = QPushButton("  Import Files")
-        import_btn.setObjectName("primaryButton")
-        import_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        import_btn.setFont(QFont("Segoe UI", 12, QFont.Weight.DemiBold))
-        import_btn.setMinimumHeight(42)
-        import_btn.setMinimumWidth(160)
-        import_btn.clicked.connect(self.import_requested.emit)
-        header_layout.addWidget(import_btn)
+        refresh_btn = QPushButton("  Refresh Folder")
+        refresh_btn.setObjectName("secondaryButton")
+        refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        refresh_btn.setFont(QFont("Segoe UI", 12, QFont.Weight.DemiBold))
+        refresh_btn.setMinimumHeight(42)
+        refresh_btn.setMinimumWidth(160)
+        refresh_btn.clicked.connect(self.refresh_folder_requested.emit)
+        header_layout.addWidget(refresh_btn)
+
+        select_folder_btn = QPushButton("  Select Folder")
+        select_folder_btn.setObjectName("primaryButton")
+        select_folder_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        select_folder_btn.setFont(QFont("Segoe UI", 12, QFont.Weight.DemiBold))
+        select_folder_btn.setMinimumHeight(42)
+        select_folder_btn.setMinimumWidth(160)
+        select_folder_btn.clicked.connect(self.select_folder_requested.emit)
+        header_layout.addWidget(select_folder_btn)
         layout.addLayout(header_layout)
 
         # ── Stat cards ────────────────────────────────────────────────
@@ -147,7 +157,7 @@ class DashboardPage(QWidget):
         layout.addWidget(self._recent_list, 1)
 
         # Empty state
-        self._empty_label = QLabel("No documents yet. Click 'Import Files' to get started!")
+        self._empty_label = QLabel("No documents yet. Click 'Select Folder' to get started!")
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_label.setFont(QFont("Segoe UI", 13))
         self._empty_label.setStyleSheet("color: #484f58; padding: 40px;")
@@ -178,6 +188,7 @@ class DashboardPage(QWidget):
                     ".pdf": "📕",
                     ".docx": "📘",
                     ".xlsx": "📗",
+                    ".xls": "📗",
                     ".txt": "📄",
                 }
                 icon = icon_map.get(doc.file_type, "📄")

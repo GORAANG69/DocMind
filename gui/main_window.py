@@ -1,5 +1,6 @@
 """Main window — application shell with sidebar navigation and page stack."""
 from pathlib import Path
+import time
 
 from PyQt6.QtCore import Qt, QMimeData
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QFont
@@ -197,11 +198,13 @@ class MainWindow(QMainWindow):
 
     def _connect_signals(self):
         # Dashboard
-        self._dashboard.import_requested.connect(self._open_file_dialog)
+        self._dashboard.select_folder_requested.connect(self._open_folder_dialog)
+        self._dashboard.refresh_folder_requested.connect(self._refresh_folder)
         self._dashboard.document_selected.connect(self._open_document)
 
         # Library
-        self._library.import_requested.connect(self._open_file_dialog)
+        self._library.select_folder_requested.connect(self._open_folder_dialog)
+        self._library.refresh_folder_requested.connect(self._refresh_folder)
         self._library.document_open.connect(self._open_document)
         self._library.document_stats.connect(self._open_stats)
         self._library.document_deleted.connect(self._on_doc_deleted)
@@ -211,6 +214,7 @@ class MainWindow(QMainWindow):
 
         # Viewer
         self._viewer.back_requested.connect(lambda: self._navigate(self.PAGE_LIBRARY))
+        self._viewer.delete_requested.connect(self._on_viewer_delete_requested)
 
         # Statistics
         self._statistics.back_requested.connect(lambda: self._navigate(self.PAGE_LIBRARY))
@@ -236,21 +240,70 @@ class MainWindow(QMainWindow):
             case self.PAGE_STATISTICS:
                 self._statistics.refresh()
 
-    # ── File import ───────────────────────────────────────────────────
+    # ── Folder selection and scanning ─────────────────────────────────
 
-    def _open_file_dialog(self):
-        ext_filter = " ".join(f"*{ext}" for ext in SUPPORTED_EXTENSIONS)
-        paths, _ = QFileDialog.getOpenFileNames(
-            self,
-            "Import Documents",
-            "",
-            f"Supported Files ({ext_filter});;All Files (*)",
-        )
-        if paths:
-            self._import_files([Path(p) for p in paths])
+    def _open_folder_dialog(self):
+        dir_path = QFileDialog.getExistingDirectory(self, "Select Research Folder")
+        if dir_path:
+            # Save folder path to DB settings
+            self._library._service._db.set_setting("last_folder", dir_path)
+            self._scan_and_import_folder(Path(dir_path))
 
-    def _import_files(self, file_paths: list[Path]):
-        """Start background import of files."""
+    def _refresh_folder(self):
+        last_folder = self._library._service._db.get_setting("last_folder")
+        if not last_folder:
+            QMessageBox.warning(
+                self, "No Folder Selected",
+                "No research folder has been selected yet. Please click 'Select Folder' first."
+            )
+            return
+        path = Path(last_folder)
+        if not path.exists() or not path.is_dir():
+            QMessageBox.warning(
+                self, "Folder Not Found",
+                f"The previously selected folder does not exist:\n\n{last_folder}\n\nPlease select another folder."
+            )
+            return
+
+        # ── Detect documents whose source files are now missing ───────────
+        all_docs = self._library._service.get_all_documents()
+        missing_docs = [
+            doc for doc in all_docs
+            if not Path(doc.original_path).exists()
+        ]
+        for doc in missing_docs:
+            reply = QMessageBox(self)
+            reply.setWindowTitle("Missing File Detected")
+            reply.setText(
+                "The following indexed document no longer exists on disk.\n"
+                "Would you like to remove it from the library?"
+            )
+            reply.setInformativeText(doc.filename)
+            remove_btn = reply.addButton("Remove", QMessageBox.ButtonRole.AcceptRole)
+            keep_btn = reply.addButton("Keep Metadata", QMessageBox.ButtonRole.RejectRole)
+            reply.setDefaultButton(keep_btn)
+            reply.exec()
+            if reply.clickedButton() is remove_btn:
+                self._library._service.delete_document(doc.id)
+                self._on_doc_deleted(doc.id)
+
+        self._scan_and_import_folder(path, is_refresh=True)
+
+    def _scan_and_import_folder(self, folder_path: Path, is_refresh: bool = False):
+        supported_exts = {".pdf", ".xls", ".xlsx", ".docx", ".txt", ".text", ".md", ".csv", ".log", ".json", ".xml", ".html"}
+        file_paths = []
+        try:
+            for path in folder_path.rglob("*"):
+                if path.is_file() and path.suffix.lower() in supported_exts:
+                    file_paths.append(path)
+        except Exception as exc:
+            QMessageBox.warning(self, "Scan Error", f"Failed to scan folder:\n\n{exc}")
+            return
+
+        self._import_files(file_paths, is_refresh=is_refresh)
+
+    def _import_files(self, file_paths: list[Path], is_refresh: bool = False):
+        """Start background import of files with a cancelable progress dialog."""
         if self._import_worker and self._import_worker.isRunning():
             QMessageBox.information(
                 self, "Import in Progress",
@@ -258,19 +311,41 @@ class MainWindow(QMainWindow):
             )
             return
 
-        self._progress_bar.setVisible(True)
-        self._progress_bar.setMaximum(len(file_paths))
-        self._progress_bar.setValue(0)
+        total = len(file_paths)
+        if total == 0:
+            QMessageBox.information(
+                self, "No Files Found",
+                "No supported documents were found in the selected folder."
+            )
+            return
 
+        from PyQt6.QtWidgets import QProgressDialog
+        self._progress_dialog = QProgressDialog("Scanning documents...", "Cancel", 0, total, self)
+        self._progress_dialog.setWindowTitle("Indexing Research Papers..." if not is_refresh else "Refreshing Research Folder...")
+        self._progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        self._progress_dialog.setMinimumDuration(0)
+        self._progress_dialog.setValue(0)
+        self._progress_dialog.canceled.connect(self._cancel_import)
+
+        self._start_time = time.time()
         self._import_worker = ImportWorker(file_paths, self)
         self._import_worker.progress.connect(self._on_import_progress)
         self._import_worker.file_error.connect(self._on_import_error)
         self._import_worker.all_done.connect(self._on_import_done)
         self._import_worker.start()
 
+    def _cancel_import(self):
+        if self._import_worker:
+            self._import_worker.cancel()
+
     def _on_import_progress(self, current: int, total: int, filename: str):
-        self._progress_bar.setValue(current)
-        self._status_label.setText(f"Importing {filename}... ({current}/{total})")
+        if self._progress_dialog:
+            self._progress_dialog.setValue(current)
+            self._progress_dialog.setLabelText(
+                f"Scanning documents...\n\n"
+                f"Processing paper {current} of {total}\n\n"
+                f"Current File:\n{filename}"
+            )
 
     def _on_import_error(self, filename: str, error: str):
         QMessageBox.warning(
@@ -278,24 +353,73 @@ class MainWindow(QMainWindow):
             f"Failed to import '{filename}':\n\n{error}"
         )
 
-    def _on_import_done(self, success: int, errors: int):
-        self._progress_bar.setVisible(False)
-        self._status_label.setText(
-            f"Import complete: {success} file{'s' if success != 1 else ''} imported"
-            + (f", {errors} error{'s' if errors != 1 else ''}" if errors else "")
-        )
+    def _on_import_done(self, success: int, errors: int, skipped: int):
+        if self._progress_dialog:
+            self._progress_dialog.close()
+            self._progress_dialog = None
+
+        elapsed_time = time.time() - self._start_time
+
         # Refresh current page
         page = self._stack.currentIndex()
         self._navigate(page)
 
+        if self._import_worker and self._import_worker._is_cancelled:
+            QMessageBox.information(self, "Import Cancelled", "Folder indexing was cancelled by user.")
+            return
+
+        # Fetch library statistics
+        stats = self._library._service.get_library_statistics()
+        time_str = f"{elapsed_time:.2f} seconds" if elapsed_time < 60 else f"{int(elapsed_time // 60)}m {int(elapsed_time % 60)}s"
+
+        stats_text = (
+            f"Folder scanning and indexing complete!\n\n"
+            f"• Imported successfully: {success} document(s)\n"
+            f"• Skipped (already indexed): {skipped} document(s)\n"
+            f"• Failed to import: {errors} document(s)\n\n"
+            f"Library Aggregate Statistics:\n"
+            f"• Total Documents: {stats['total_documents']}\n"
+            f"• Total Words: {stats['total_words']:,}\n"
+            f"• Total Storage: {self._library._service._format_size(stats['total_size'])}\n"
+            f"• PDF Count: {stats['pdf_count']}\n"
+            f"• Excel Count: {stats['excel_count']}\n"
+            f"• Average Words per Document: {stats['avg_words']:,}\n"
+            f"• Largest Document: {stats['largest_document']}\n"
+            f"• Smallest Document: {stats['smallest_document']}\n"
+            f"• Indexing Time (this run): {time_str}"
+        )
+
+        QMessageBox.information(self, "Indexing Summary", stats_text)
+        self._show_status(f"✔  Library updated — {success} imported, {skipped} skipped, {errors} errors.")
+
     def _on_doc_deleted(self, doc_id: str):
-        self._status_label.setText("Document deleted")
+        # If viewer is currently showing the deleted document, go back to library
+        if (self._stack.currentIndex() == self.PAGE_VIEWER
+                and self._viewer._current_doc
+                and self._viewer._current_doc.id == doc_id):
+            self._navigate(self.PAGE_LIBRARY)
+
+        # Refresh all panels immediately
         self._dashboard.refresh()
+        self._library.refresh()
+        self._search.clear_results_for(doc_id)
+        self._show_status("✔  Document deleted successfully. Library updated.")
+
+    def _on_viewer_delete_requested(self, doc_id: str):
+        """Handle delete request emitted from the document viewer."""
+        # Delegate to library which has the full confirmation + deletion logic
+        self._library._delete_document(doc_id)
+
+    def _show_status(self, message: str, duration_ms: int = 4000):
+        """Display a temporary message in the status bar."""
+        self._status_label.setText(message)
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(duration_ms, lambda: self._status_label.setText("Ready"))
 
     # ── Document navigation ───────────────────────────────────────────
 
-    def _open_document(self, doc_id: str):
-        self._viewer.load_document(doc_id)
+    def _open_document(self, doc_id: str, query: str = "", page_number = None, sheet_name = None, cell_ref = None):
+        self._viewer.load_document(doc_id, query, page_number, sheet_name, cell_ref)
         self._stack.setCurrentIndex(self.PAGE_VIEWER)
         for btn in self._nav_buttons:
             btn.setChecked(False)
@@ -313,16 +437,24 @@ class MainWindow(QMainWindow):
     def dropEvent(self, event: QDropEvent):
         urls = event.mimeData().urls()
         file_paths = []
+        supported_exts = {".pdf", ".xls", ".xlsx", ".docx", ".txt", ".text", ".md", ".csv", ".log", ".json", ".xml", ".html"}
         for url in urls:
             path = Path(url.toLocalFile())
-            if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS:
+            if path.is_file() and path.suffix.lower() in supported_exts:
                 file_paths.append(path)
+            elif path.is_dir():
+                try:
+                    for subpath in path.rglob("*"):
+                        if subpath.is_file() and subpath.suffix.lower() in supported_exts:
+                            file_paths.append(subpath)
+                except Exception:
+                    pass
 
         if file_paths:
             self._import_files(file_paths)
         elif urls:
             QMessageBox.information(
                 self, "Unsupported Files",
-                f"None of the dropped files have a supported format.\n\n"
-                f"Supported: {', '.join(SUPPORTED_EXTENSIONS)}"
+                f"No supported documents were found.\n\n"
+                f"Supported: {', '.join(supported_exts)}"
             )
