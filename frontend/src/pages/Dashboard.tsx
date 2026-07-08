@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { FileText, Search, Database, ArrowRight } from 'lucide-react';
 import { ApiClient } from '../api/client';
 
