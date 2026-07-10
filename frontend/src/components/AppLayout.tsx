@@ -1,7 +1,47 @@
+import { useState, useEffect } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
-import { FileText, Search, LayoutDashboard } from 'lucide-react';
+import { FileText, Search, LayoutDashboard, Settings } from 'lucide-react';
 
 const AppLayout = () => {
+  const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'system');
+
+  useEffect(() => {
+    const handleThemeChange = () => {
+      const storedTheme = localStorage.getItem('theme') || 'system';
+      setTheme(storedTheme);
+    };
+
+    window.addEventListener('storage', handleThemeChange);
+    window.addEventListener('theme-changed', handleThemeChange);
+
+    return () => {
+      window.removeEventListener('storage', handleThemeChange);
+      window.removeEventListener('theme-changed', handleThemeChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === 'system') {
+      const applySystemTheme = () => {
+        const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        root.setAttribute('data-theme', systemTheme);
+      };
+      applySystemTheme();
+      
+      const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+      const listener = () => {
+        if ((localStorage.getItem('theme') || 'system') === 'system') {
+          applySystemTheme();
+        }
+      };
+      mediaQuery.addEventListener('change', listener);
+      return () => mediaQuery.removeEventListener('change', listener);
+    } else {
+      root.setAttribute('data-theme', theme);
+    }
+  }, [theme]);
+
   return (
     <div className="app-container">
       {/* Sidebar */}
@@ -35,6 +75,13 @@ const AppLayout = () => {
           >
             <Search size={20} />
             Search
+          </NavLink>
+          <NavLink 
+            to="/settings" 
+            className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+          >
+            <Settings size={20} />
+            Settings
           </NavLink>
         </nav>
       </aside>

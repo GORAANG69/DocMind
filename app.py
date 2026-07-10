@@ -97,10 +97,12 @@ async def upload_document(file: UploadFile = File(...)):
     """Upload a file and index it into the database."""
     log.info("Receive upload request for file: %s", file.filename)
     
-    # Save the upload to a temp directory
+    # Save the upload to a temp directory inside a UUID subfolder to prevent conflicts
+    import uuid
     temp_dir = DATA_DIR / "temp"
-    temp_dir.mkdir(parents=True, exist_ok=True)
-    temp_file_path = temp_dir / f"upload_{file.filename}"
+    temp_sub_dir = temp_dir / str(uuid.uuid4())
+    temp_sub_dir.mkdir(parents=True, exist_ok=True)
+    temp_file_path = temp_sub_dir / file.filename
     
     try:
         with open(temp_file_path, "wb") as f:
@@ -109,9 +111,13 @@ async def upload_document(file: UploadFile = File(...)):
         # Import file using standard document service
         doc = doc_service.import_file(temp_file_path)
         
-        # Clean up temp file
+        # Clean up temp file and its directory
         if temp_file_path.exists():
             temp_file_path.unlink()
+        try:
+            temp_sub_dir.rmdir()
+        except Exception:
+            pass
             
         if doc is None:
             log.warning("File %s was skipped (duplicate)", file.filename)
@@ -127,6 +133,10 @@ async def upload_document(file: UploadFile = File(...)):
         log.error("Failed to upload/index file %s: %s", file.filename, exc, exc_info=True)
         if temp_file_path.exists():
             temp_file_path.unlink()
+        try:
+            temp_sub_dir.rmdir()
+        except Exception:
+            pass
         raise HTTPException(status_code=500, detail=str(exc))
 
 @app.post("/api/upload/multiple")
@@ -140,11 +150,13 @@ async def upload_multiple_documents(files: List[UploadFile] = File(...)):
         "skipped": []
     }
     
+    import uuid
     temp_dir = DATA_DIR / "temp"
-    temp_dir.mkdir(parents=True, exist_ok=True)
     
     for file in files:
-        temp_file_path = temp_dir / f"upload_{file.filename}"
+        temp_sub_dir = temp_dir / str(uuid.uuid4())
+        temp_sub_dir.mkdir(parents=True, exist_ok=True)
+        temp_file_path = temp_sub_dir / file.filename
         try:
             with open(temp_file_path, "wb") as f:
                 shutil.copyfileobj(file.file, f)
@@ -153,6 +165,10 @@ async def upload_multiple_documents(files: List[UploadFile] = File(...)):
             
             if temp_file_path.exists():
                 temp_file_path.unlink()
+            try:
+                temp_sub_dir.rmdir()
+            except Exception:
+                pass
                 
             if doc is None:
                 results["skipped"].append({"filename": file.filename, "reason": "Already indexed"})
@@ -163,6 +179,10 @@ async def upload_multiple_documents(files: List[UploadFile] = File(...)):
             log.error("Failed to process %s in batch: %s", file.filename, exc)
             if temp_file_path.exists():
                 temp_file_path.unlink()
+            try:
+                temp_sub_dir.rmdir()
+            except Exception:
+                pass
             results["failed"].append({"filename": file.filename, "error": str(exc)})
             
     return {"status": "completed", "summary": results}
@@ -396,6 +416,76 @@ def delete_history():
         return {"status": "success", "message": "History cleared successfully"}
     except Exception as exc:
         log.error("Failed to delete history: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+@app.post("/api/settings/rebuild")
+def rebuild_search_index():
+    """
+    Rebuild search index. Re-reads all stored files, re-extracts their text,
+    re-computes statistics, and updates the database records.
+    """
+    log.info("Rebuilding search index for all documents")
+    try:
+        from parsers.parser_factory import ParserFactory
+        from services.statistics_service import StatisticsService
+        
+        docs = doc_service.get_all_documents()
+        success_count = 0
+        error_count = 0
+        for doc in docs:
+            try:
+                stored_path = Path(doc.stored_path)
+                if not stored_path.exists():
+                    log.warning("Stored path does not exist for doc_id=%s: %s", doc.id, doc.stored_path)
+                    error_count += 1
+                    continue
+                
+                # Re-extract text using factory
+                parser = ParserFactory.get_parser(stored_path)
+                extracted_text = parser.extract_text(stored_path)
+                
+                # Update text file
+                text_path = Path(doc.extracted_text_path)
+                text_path.parent.mkdir(parents=True, exist_ok=True)
+                text_path.write_text(extracted_text, encoding="utf-8")
+                
+                # Recompute stats
+                stats = StatisticsService.compute(extracted_text)
+                db_manager.update_stats(
+                    doc_id=doc.id,
+                    word_count=stats["word_count"],
+                    unique_words=stats["unique_words"],
+                    char_count=stats["char_count"],
+                    line_count=stats["line_count"]
+                )
+                
+                # Update db text content
+                db_manager._conn.execute(
+                    "UPDATE documents SET extracted_text = ? WHERE id = ?",
+                    (extracted_text, doc.id)
+                )
+                db_manager._conn.commit()
+                success_count += 1
+            except Exception as exc:
+                log.error("Failed to re-index doc %s: %s", doc.filename, exc)
+                error_count += 1
+                
+        return {
+            "status": "success", 
+            "message": f"Index rebuild complete. {success_count} succeeded, {error_count} failed."
+        }
+    except Exception as exc:
+        log.error("Rebuild index error: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+@app.post("/api/settings/clear-cache")
+def clear_search_cache():
+    """Clear all past search and chat history logs."""
+    try:
+        db_manager.clear_all_history()
+        return {"status": "success", "message": "Search history and cache cleared successfully."}
+    except Exception as exc:
+        log.error("Failed to clear search cache: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
 # ── Main Entry ─────────────────────────────────────────────────────────────

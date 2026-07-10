@@ -78,4 +78,20 @@ export class ApiClient {
     if (!response.ok) throw new Error('Failed to fetch stats');
     return response.json();
   }
+
+  static async rebuildIndex(): Promise<any> {
+    const response = await fetch(`${API_BASE_URL}/api/settings/rebuild`, {
+      method: 'POST',
+    });
+    if (!response.ok) throw new Error('Failed to rebuild search index');
+    return response.json();
+  }
+
+  static async clearSearchCache(): Promise<any> {
+    const response = await fetch(`${API_BASE_URL}/api/settings/clear-cache`, {
+      method: 'POST',
+    });
+    if (!response.ok) throw new Error('Failed to clear search cache');
+    return response.json();
+  }
 }

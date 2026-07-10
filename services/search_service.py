@@ -102,8 +102,8 @@ class SearchService:
                             positions=[m.start() for m in matches]
                         )
                     )
-            elif file_type in (".xlsx", ".xls"):
-                # Excel: split by lines, each line is sheet\tcell\tvalue
+            elif file_type in (".xlsx", ".xls", ".csv"):
+                # Excel/CSV: split by lines, each line is sheet\tcell\tvalue
                 lines = text.split("\n")
                 for line in lines:
                     if not line.strip():

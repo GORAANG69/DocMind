@@ -4,6 +4,7 @@ import Dashboard from './pages/Dashboard';
 import Documents from './pages/Documents';
 import SearchPage from './pages/SearchPage';
 import DocumentViewer from './pages/DocumentViewer';
+import SettingsPage from './pages/SettingsPage';
 
 import NotFound from './pages/NotFound';
 import './index.css';
@@ -16,6 +17,7 @@ function App() {
           <Route index element={<Dashboard />} />
           <Route path="documents" element={<Documents />} />
           <Route path="search" element={<SearchPage />} />
+          <Route path="settings" element={<SettingsPage />} />
         </Route>
         <Route path="/viewer/:docId" element={<DocumentViewer />} />
         <Route path="*" element={<NotFound />} />

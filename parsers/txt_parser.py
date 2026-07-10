@@ -25,4 +25,4 @@ class TxtParser(BaseParser):
 
     @staticmethod
     def supported_extensions() -> list[str]:
-        return [".txt", ".text", ".md", ".csv", ".log", ".json", ".xml", ".html"]
+        return [".txt", ".text", ".md", ".log", ".xml", ".html"]

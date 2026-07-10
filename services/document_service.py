@@ -200,6 +200,10 @@ class DocumentService:
         
         pdf_count = conn.execute("SELECT COUNT(*) FROM documents WHERE file_type = '.pdf'").fetchone()[0]
         excel_count = conn.execute("SELECT COUNT(*) FROM documents WHERE file_type IN ('.xlsx', '.xls')").fetchone()[0]
+        docx_count = conn.execute("SELECT COUNT(*) FROM documents WHERE file_type IN ('.docx', '.doc')").fetchone()[0]
+        xlsx_count = conn.execute("SELECT COUNT(*) FROM documents WHERE file_type IN ('.xlsx', '.xls')").fetchone()[0]
+        csv_count = conn.execute("SELECT COUNT(*) FROM documents WHERE file_type = '.csv'").fetchone()[0]
+        json_count = conn.execute("SELECT COUNT(*) FROM documents WHERE file_type = '.json'").fetchone()[0]
         
         avg_words = conn.execute("SELECT COALESCE(AVG(word_count), 0) FROM documents").fetchone()[0]
         
@@ -211,13 +215,31 @@ class DocumentService:
         
         return {
             "total_documents": doc_count,
+            "totalDocuments": doc_count,
             "total_words": word_sum,
+            "totalWords": word_sum,
             "total_size": size_sum,
+            "totalSize": size_sum,
             "pdf_count": pdf_count,
+            "pdfCount": pdf_count,
             "excel_count": excel_count,
+            "excelCount": excel_count,
+            "docx_count": docx_count,
+            "docxCount": docx_count,
+            "xlsx_count": xlsx_count,
+            "xlsxCount": xlsx_count,
+            "csv_count": csv_count,
+            "csvCount": csv_count,
+            "json_count": json_count,
+            "jsonCount": json_count,
+            "total_indexed": doc_count,
+            "totalIndexed": doc_count,
             "avg_words": int(avg_words),
+            "avgWords": int(avg_words),
             "largest_document": largest_doc,
-            "smallest_document": smallest_doc
+            "largestDocument": largest_doc,
+            "smallest_document": smallest_doc,
+            "smallestDocument": smallest_doc
         }
 
     @staticmethod

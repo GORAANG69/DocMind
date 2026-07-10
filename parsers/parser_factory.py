@@ -7,13 +7,15 @@ from parsers.docx_parser import DocxParser
 from parsers.xlsx_parser import XlsxParser
 from parsers.xls_parser import XlsParser
 from parsers.txt_parser import TxtParser
+from parsers.csv_parser import CsvParser
+from parsers.json_parser import JsonParser
 
 _PARSER_MAP: dict[str, type[BaseParser]] = {}
 
 
 def _register_parsers():
     """Build the extension → parser lookup once."""
-    for cls in (PdfParser, DocxParser, XlsxParser, XlsParser, TxtParser):
+    for cls in (PdfParser, DocxParser, XlsxParser, XlsParser, TxtParser, CsvParser, JsonParser):
         for ext in cls.supported_extensions():
             _PARSER_MAP[ext.lower()] = cls
 
