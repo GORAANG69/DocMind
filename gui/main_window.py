@@ -269,7 +269,7 @@ class MainWindow(QMainWindow):
         all_docs = self._library._service.get_all_documents()
         missing_docs = [
             doc for doc in all_docs
-            if not Path(doc.original_path).exists()
+            if not Path(doc.original_path).exists() and not Path(doc.stored_path).exists()
         ]
         for doc in missing_docs:
             reply = QMessageBox(self)

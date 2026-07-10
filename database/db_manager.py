@@ -106,6 +106,15 @@ class DatabaseManager:
         except sqlite3.OperationalError:
             pass  # Already exists
 
+        # Clean up legacy 'upload_' prefix in filenames
+        try:
+            self._conn.execute(
+                "UPDATE documents SET filename = SUBSTR(filename, 8) WHERE filename LIKE 'upload_%'"
+            )
+            self._conn.commit()
+        except Exception:
+            pass
+
     # ── CRUD ──────────────────────────────────────────────────────────
 
     def insert_document(self, doc: Document, extracted_text: str = "") -> None:

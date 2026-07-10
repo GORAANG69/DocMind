@@ -39,7 +39,7 @@ class DocumentService:
                 hasher.update(chunk)
         return hasher.hexdigest()
 
-    def import_file(self, source_path: Path) -> Optional[Document]:
+    def import_file(self, source_path: Path, original_path: Optional[str] = None) -> Optional[Document]:
         """
         Import a single file into DocMind.
 
@@ -64,13 +64,14 @@ class DocumentService:
         sha256 = self.compute_sha256(source_path)
 
         # Check duplicate
-        dup_status = self._db.check_duplicate(str(source_path), sha256)
+        orig_path_str = original_path if original_path is not None else str(source_path)
+        dup_status = self._db.check_duplicate(orig_path_str, sha256)
         if dup_status in ("skip", "skip_hash"):
             return None  # Skipped
         elif dup_status == "update":
             # Path matches but content is different (file was updated)
             # Find and delete old record & files
-            old_doc = self._db.get_document_by_path(str(source_path))
+            old_doc = self._db.get_document_by_path(orig_path_str)
             if old_doc:
                 self.delete_document(old_doc.id)
 
@@ -97,7 +98,7 @@ class DocumentService:
         doc = Document(
             id=doc_id,
             filename=source_path.name,
-            original_path=str(source_path),
+            original_path=orig_path_str,
             stored_path=str(stored_path),
             extracted_text_path=str(text_path),
             file_type=ext,
@@ -198,12 +199,12 @@ class DocumentService:
         # Query breakdowns and aggregates using SQLite connection directly
         conn = self._db._conn
         
-        pdf_count = conn.execute("SELECT COUNT(*) FROM documents WHERE file_type = '.pdf'").fetchone()[0]
-        excel_count = conn.execute("SELECT COUNT(*) FROM documents WHERE file_type IN ('.xlsx', '.xls')").fetchone()[0]
-        docx_count = conn.execute("SELECT COUNT(*) FROM documents WHERE file_type IN ('.docx', '.doc')").fetchone()[0]
-        xlsx_count = conn.execute("SELECT COUNT(*) FROM documents WHERE file_type IN ('.xlsx', '.xls')").fetchone()[0]
-        csv_count = conn.execute("SELECT COUNT(*) FROM documents WHERE file_type = '.csv'").fetchone()[0]
-        json_count = conn.execute("SELECT COUNT(*) FROM documents WHERE file_type = '.json'").fetchone()[0]
+        pdf_count = conn.execute("SELECT COUNT(*) FROM documents WHERE file_type IN ('.pdf', 'pdf')").fetchone()[0]
+        excel_count = conn.execute("SELECT COUNT(*) FROM documents WHERE file_type IN ('.xlsx', '.xls', 'xlsx', 'xls')").fetchone()[0]
+        docx_count = conn.execute("SELECT COUNT(*) FROM documents WHERE file_type IN ('.docx', '.doc', 'docx', 'doc')").fetchone()[0]
+        xlsx_count = conn.execute("SELECT COUNT(*) FROM documents WHERE file_type IN ('.xlsx', '.xls', 'xlsx', 'xls')").fetchone()[0]
+        csv_count = conn.execute("SELECT COUNT(*) FROM documents WHERE file_type IN ('.csv', 'csv')").fetchone()[0]
+        json_count = conn.execute("SELECT COUNT(*) FROM documents WHERE file_type IN ('.json', 'json')").fetchone()[0]
         
         avg_words = conn.execute("SELECT COALESCE(AVG(word_count), 0) FROM documents").fetchone()[0]
         
