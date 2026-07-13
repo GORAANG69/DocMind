@@ -127,7 +127,7 @@ async def upload_document(file: UploadFile = File(...)):
             )
             
         log.info("File %s indexed successfully as doc_id=%s", file.filename, doc.id)
-        return {"status": "success", "document": dataclasses.asdict(doc)}
+        return {"status": "success", "document": doc.to_dict()}
         
     except Exception as exc:
         log.error("Failed to upload/index file %s: %s", file.filename, exc, exc_info=True)
@@ -192,7 +192,7 @@ def get_documents():
     """List all indexed documents, ordered by creation date."""
     try:
         docs = doc_service.get_all_documents()
-        return [dataclasses.asdict(d) for d in docs]
+        return [d.to_dict() for d in docs]
     except Exception as exc:
         log.error("Failed to fetch documents: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
@@ -203,7 +203,7 @@ def get_document(doc_id: str):
     doc = doc_service.get_document(doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-    return dataclasses.asdict(doc)
+    return doc.to_dict()
 
 @app.get("/api/document/{doc_id}/download")
 def download_document(doc_id: str):
@@ -391,7 +391,7 @@ def get_recent():
     """Retrieve the 10 most recently added documents."""
     try:
         docs = doc_service.get_recent_documents(limit=10)
-        return [dataclasses.asdict(d) for d in docs]
+        return [d.to_dict() for d in docs]
     except Exception as exc:
         log.error("Failed to retrieve recent documents: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))

@@ -19,6 +19,7 @@ class SearchResult:
     sheet_name: Optional[str] = None
     cell_ref: Optional[str] = None
     positions: list[int] = field(default_factory=list)
+    original_filename: str = ""
 
 
 class SearchService:
@@ -99,7 +100,8 @@ class SearchService:
                             snippet=snippet,
                             match_count=len(matches),
                             page_number=page_idx,
-                            positions=[m.start() for m in matches]
+                            positions=[m.start() for m in matches],
+                            original_filename=filename,
                         )
                     )
             elif file_type in (".xlsx", ".xls", ".csv"):
@@ -132,7 +134,8 @@ class SearchService:
                                 match_count=len(matches),
                                 sheet_name=sheet_name,
                                 cell_ref=cell_ref,
-                                positions=[m.start() for m in matches]
+                                positions=[m.start() for m in matches],
+                                original_filename=filename,
                             )
                         )
             else:
@@ -156,7 +159,8 @@ class SearchService:
                         file_type=file_type,
                         snippet=snippet,
                         match_count=len(matches),
-                        positions=[m.start() for m in matches]
+                        positions=[m.start() for m in matches],
+                        original_filename=filename,
                     )
                 )
 

@@ -77,8 +77,17 @@ class DocumentService:
 
         doc_id = str(uuid.uuid4())
         ext = source_path.suffix.lower()
-        stored_name = f"{doc_id}_{source_path.name}"
-        stored_path = self._upload_dir / stored_name
+
+        # Determine original name vs internal storage name (prefixed with upload_)
+        name = source_path.name
+        if name.startswith("upload_"):
+            original_filename = name[7:]
+            stored_filename = name
+        else:
+            original_filename = name
+            stored_filename = f"upload_{name}"
+
+        stored_path = self._upload_dir / f"{doc_id}_{stored_filename}"
         text_path = self._text_dir / f"{doc_id}.txt"
 
         # Copy file
@@ -97,7 +106,7 @@ class DocumentService:
         # Build document
         doc = Document(
             id=doc_id,
-            filename=source_path.name,
+            filename=original_filename,
             original_path=orig_path_str,
             stored_path=str(stored_path),
             extracted_text_path=str(text_path),
@@ -108,6 +117,8 @@ class DocumentService:
             char_count=stats["char_count"],
             line_count=stats["line_count"],
             sha256=sha256,
+            original_filename=original_filename,
+            stored_filename=stored_filename,
         )
 
         self._db.insert_document(doc, extracted_text)

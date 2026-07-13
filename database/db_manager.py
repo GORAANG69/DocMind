@@ -70,7 +70,9 @@ class DatabaseManager:
                 line_count INTEGER DEFAULT 0,
                 extracted_text TEXT DEFAULT '',
                 sha256 TEXT DEFAULT '',
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                original_filename TEXT DEFAULT '',
+                stored_filename TEXT DEFAULT ''
             );
 
             CREATE INDEX IF NOT EXISTS idx_filename ON documents(filename);
@@ -106,6 +108,19 @@ class DatabaseManager:
         except sqlite3.OperationalError:
             pass  # Already exists
 
+        # Run migrations for original_filename and stored_filename columns
+        try:
+            self._conn.execute("ALTER TABLE documents ADD COLUMN original_filename TEXT DEFAULT ''")
+            self._conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
+        try:
+            self._conn.execute("ALTER TABLE documents ADD COLUMN stored_filename TEXT DEFAULT ''")
+            self._conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
         # Note: legacy 'upload_' prefix migration removed.
         # Filenames are stored as-is (original browser filename) since the
         # internal storage path already uses a UUID prefix for uniqueness.
@@ -119,8 +134,8 @@ class DatabaseManager:
             INSERT INTO documents
                 (id, filename, original_path, stored_path, extracted_text_path,
                  file_type, file_size, word_count, unique_words, char_count,
-                 line_count, sha256, extracted_text, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 line_count, sha256, extracted_text, created_at, original_filename, stored_filename)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 doc.id,
@@ -137,6 +152,8 @@ class DatabaseManager:
                 doc.sha256,
                 extracted_text,
                 doc.created_at,
+                doc.original_filename,
+                doc.stored_filename,
             ),
         )
         self._conn.commit()
@@ -205,7 +222,7 @@ class DatabaseManager:
         """
         rows = self._conn.execute(
             """
-            SELECT id, filename, file_type, extracted_text
+            SELECT id, COALESCE(NULLIF(original_filename, ''), filename) AS filename, file_type, extracted_text
             FROM documents
             WHERE extracted_text LIKE ?
             """,
@@ -294,6 +311,8 @@ class DatabaseManager:
             line_count=row["line_count"],
             sha256=row["sha256"] if "sha256" in row.keys() else "",
             created_at=row["created_at"],
+            original_filename=row["original_filename"] if "original_filename" in row.keys() else row["filename"],
+            stored_filename=row["stored_filename"] if "stored_filename" in row.keys() else "",
         )
 
     def close(self):
