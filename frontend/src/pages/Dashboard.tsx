@@ -47,6 +47,18 @@ const Dashboard = () => {
 
   useEffect(() => {
     fetchStats();
+
+    // Refresh immediately when Documents page signals a change (upload / delete)
+    const handleStatsChanged = () => fetchStats();
+    window.addEventListener('docmind:stats-changed', handleStatsChanged);
+
+    // Fallback polling every 30 seconds to catch any external changes
+    const interval = setInterval(fetchStats, 30_000);
+
+    return () => {
+      window.removeEventListener('docmind:stats-changed', handleStatsChanged);
+      clearInterval(interval);
+    };
   }, []);
 
   const formatSize = (bytes: number) => {

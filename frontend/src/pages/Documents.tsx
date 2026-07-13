@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { UploadCloud, File as FileIcon, FileText, CheckCircle, AlertCircle, RefreshCw, FolderPlus, FilePlus, Eye, Trash2, CheckSquare, Square, AlertTriangle, FileSpreadsheet, Code, Table } from 'lucide-react';
+import { UploadCloud, File as FileIcon, FileText, CheckCircle, AlertCircle, RefreshCw, FilePlus, Eye, Trash2, CheckSquare, Square, AlertTriangle, FileSpreadsheet, Code, Table } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { ApiClient } from '../api/client';
 
@@ -25,7 +25,6 @@ const Documents = () => {
   const [uploadSummary, setUploadSummary] = useState<{ successful: number; failed: number } | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const folderInputRef = useRef<HTMLInputElement>(null);
 
   const fetchDocuments = async () => {
     setLoading(true);
@@ -115,6 +114,8 @@ const Documents = () => {
     setUploading(false);
     setSelectedIds(new Set());
     await fetchDocuments();
+    // Notify Dashboard (and any other listener) that stats have changed
+    window.dispatchEvent(new CustomEvent('docmind:stats-changed'));
   };
 
   const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -123,52 +124,11 @@ const Documents = () => {
     if (event.target) event.target.value = '';
   };
 
-  const getFilesFromEntry = async (entry: any): Promise<File[]> => {
-    if (entry.isFile) {
-      return new Promise((resolve) => {
-        entry.file((file: File) => resolve([file]));
-      });
-    } else if (entry.isDirectory) {
-      const dirReader = entry.createReader();
-      return new Promise((resolve) => {
-        const allFiles: File[] = [];
-        const readBatch = () => {
-          dirReader.readEntries(async (entries: any[]) => {
-            if (entries.length === 0) {
-              resolve(allFiles);
-              return;
-            }
-            const batchFiles = await Promise.all(entries.map((e: any) => getFilesFromEntry(e)));
-            allFiles.push(...batchFiles.flat());
-            readBatch();
-          });
-        };
-        readBatch();
-      });
-    }
-    return [];
-  };
-
   const handleDrop = async (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.currentTarget.classList.remove('drag-active');
-
-    let allFiles: File[] = [];
-
-    if (e.dataTransfer.items) {
-      const items = Array.from(e.dataTransfer.items);
-      const promises = items.map(item => {
-        const entry = item.webkitGetAsEntry();
-        if (entry) return getFilesFromEntry(entry);
-        return Promise.resolve([]);
-      });
-      const filesArrays = await Promise.all(promises);
-      allFiles = filesArrays.flat();
-    } else {
-      allFiles = Array.from(e.dataTransfer.files);
-    }
-
-    if (allFiles.length > 0) await processUploadsQueue(allFiles);
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length > 0) await processUploadsQueue(files);
   };
 
   const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
@@ -193,6 +153,8 @@ const Documents = () => {
         next.delete(docId);
         return next;
       });
+      // Notify Dashboard that stats have changed
+      window.dispatchEvent(new CustomEvent('docmind:stats-changed'));
     } catch (err: any) {
       setError(err.message || 'Failed to delete document.');
     } finally {
@@ -215,6 +177,8 @@ const Documents = () => {
       await Promise.all(ids.map(id => ApiClient.deleteDocument(id)));
       setDocuments(prev => prev.filter(d => !selectedIds.has(d.id)));
       setSelectedIds(new Set());
+      // Notify Dashboard that stats have changed
+      window.dispatchEvent(new CustomEvent('docmind:stats-changed'));
     } catch (err: any) {
       setError(err.message || 'Failed to delete some selected documents.');
       // Refresh state to match server DB state
@@ -331,7 +295,6 @@ const Documents = () => {
         style={{ cursor: uploading ? 'default' : 'pointer' }}
       >
         <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.json" multiple onChange={handleFileSelect} />
-        <input type="file" ref={folderInputRef} style={{ display: 'none' }} accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.json" multiple {...{ webkitdirectory: '', directory: '' } as any} onChange={handleFileSelect} />
 
         {uploading ? (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '1rem' }}>
@@ -358,13 +321,10 @@ const Documents = () => {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
             <UploadCloud className="upload-icon" />
-            <h2 style={{ marginBottom: '1.5rem', fontSize: '1.4rem', fontWeight: 600 }}>Drag and drop files or folders here</h2>
+            <h2 style={{ marginBottom: '1.5rem', fontSize: '1.4rem', fontWeight: 600 }}>Drag and drop files here</h2>
             <div style={{ display: 'flex', gap: '1rem' }}>
               <button className="btn btn-primary" onClick={() => fileInputRef.current?.click()} disabled={batchDeleting}>
                 <FilePlus size={18} /> Choose Files
-              </button>
-              <button className="btn btn-secondary" onClick={() => folderInputRef.current?.click()} disabled={batchDeleting}>
-                <FolderPlus size={18} /> Choose Folder
               </button>
             </div>
             <p style={{ color: 'var(--text-secondary)', marginTop: '1.5rem', fontSize: '0.9rem' }}>
@@ -427,7 +387,7 @@ const Documents = () => {
           <div style={{ padding: '4rem 2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
             <FileText size={48} style={{ opacity: 0.2, marginBottom: '1rem' }} />
             <p style={{ fontSize: '1.1rem' }}>No documents indexed yet.</p>
-            <p>Upload a file or a folder above to get started.</p>
+            <p>Upload files above to get started.</p>
           </div>
         ) : (
           <div className="documents-table-wrapper">

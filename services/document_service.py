@@ -192,28 +192,38 @@ class DocumentService:
 
     def get_library_statistics(self) -> dict:
         """Calculate aggregate statistics across the entire document library."""
-        doc_count = self.get_total_documents()
-        word_sum = self.get_total_words()
-        size_sum = self.get_total_storage()
+        docs = self._db.get_all_documents()
+        doc_count = len(docs)
 
-        # Query breakdowns and aggregates using SQLite connection directly
-        conn = self._db._conn
-        
-        pdf_count = conn.execute("SELECT COUNT(*) FROM documents WHERE file_type IN ('.pdf', 'pdf')").fetchone()[0]
-        excel_count = conn.execute("SELECT COUNT(*) FROM documents WHERE file_type IN ('.xlsx', '.xls', 'xlsx', 'xls')").fetchone()[0]
-        docx_count = conn.execute("SELECT COUNT(*) FROM documents WHERE file_type IN ('.docx', '.doc', 'docx', 'doc')").fetchone()[0]
-        xlsx_count = conn.execute("SELECT COUNT(*) FROM documents WHERE file_type IN ('.xlsx', '.xls', 'xlsx', 'xls')").fetchone()[0]
-        csv_count = conn.execute("SELECT COUNT(*) FROM documents WHERE file_type IN ('.csv', 'csv')").fetchone()[0]
-        json_count = conn.execute("SELECT COUNT(*) FROM documents WHERE file_type IN ('.json', 'json')").fetchone()[0]
-        
-        avg_words = conn.execute("SELECT COALESCE(AVG(word_count), 0) FROM documents").fetchone()[0]
-        
-        largest_row = conn.execute("SELECT filename, file_size FROM documents ORDER BY file_size DESC LIMIT 1").fetchone()
-        smallest_row = conn.execute("SELECT filename, file_size FROM documents ORDER BY file_size ASC LIMIT 1").fetchone()
-        
-        largest_doc = f"{largest_row['filename']} ({self._format_size(largest_row['file_size'])})" if largest_row else "N/A"
-        smallest_doc = f"{smallest_row['filename']} ({self._format_size(smallest_row['file_size'])})" if smallest_row else "N/A"
-        
+        # Sum word counts from DB
+        word_sum = sum(d.word_count for d in docs)
+
+        # Compute storage size from actual files on disk (fall back to DB value)
+        size_sum = 0
+        for d in docs:
+            p = Path(d.stored_path)
+            size_sum += p.stat().st_size if p.exists() else d.file_size
+
+        # Compute per-type counts from the document list (no extra DB queries)
+        pdf_count = sum(1 for d in docs if d.file_type in ('.pdf', 'pdf'))
+        docx_count = sum(1 for d in docs if d.file_type in ('.docx', '.doc', 'docx', 'doc'))
+        xlsx_count = sum(1 for d in docs if d.file_type in ('.xlsx', '.xls', 'xlsx', 'xls'))
+        csv_count = sum(1 for d in docs if d.file_type in ('.csv', 'csv'))
+        json_count = sum(1 for d in docs if d.file_type in ('.json', 'json'))
+
+        avg_words = int(word_sum / doc_count) if doc_count > 0 else 0
+
+        # Largest / smallest by stored-on-disk size
+        if docs:
+            sorted_by_size = sorted(docs, key=lambda d: (
+                Path(d.stored_path).stat().st_size if Path(d.stored_path).exists() else d.file_size
+            ), reverse=True)
+            largest_doc = f"{sorted_by_size[0].filename} ({self._format_size(sorted_by_size[0].file_size)})"
+            smallest_doc = f"{sorted_by_size[-1].filename} ({self._format_size(sorted_by_size[-1].file_size)})"
+        else:
+            largest_doc = "N/A"
+            smallest_doc = "N/A"
+
         return {
             "total_documents": doc_count,
             "totalDocuments": doc_count,
@@ -223,24 +233,24 @@ class DocumentService:
             "totalSize": size_sum,
             "pdf_count": pdf_count,
             "pdfCount": pdf_count,
-            "excel_count": excel_count,
-            "excelCount": excel_count,
             "docx_count": docx_count,
             "docxCount": docx_count,
             "xlsx_count": xlsx_count,
             "xlsxCount": xlsx_count,
+            "excel_count": xlsx_count,
+            "excelCount": xlsx_count,
             "csv_count": csv_count,
             "csvCount": csv_count,
             "json_count": json_count,
             "jsonCount": json_count,
             "total_indexed": doc_count,
             "totalIndexed": doc_count,
-            "avg_words": int(avg_words),
-            "avgWords": int(avg_words),
+            "avg_words": avg_words,
+            "avgWords": avg_words,
             "largest_document": largest_doc,
             "largestDocument": largest_doc,
             "smallest_document": smallest_doc,
-            "smallestDocument": smallest_doc
+            "smallestDocument": smallest_doc,
         }
 
     @staticmethod

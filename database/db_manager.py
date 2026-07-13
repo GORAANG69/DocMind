@@ -106,14 +106,9 @@ class DatabaseManager:
         except sqlite3.OperationalError:
             pass  # Already exists
 
-        # Clean up legacy 'upload_' prefix in filenames
-        try:
-            self._conn.execute(
-                "UPDATE documents SET filename = SUBSTR(filename, 8) WHERE filename LIKE 'upload_%'"
-            )
-            self._conn.commit()
-        except Exception:
-            pass
+        # Note: legacy 'upload_' prefix migration removed.
+        # Filenames are stored as-is (original browser filename) since the
+        # internal storage path already uses a UUID prefix for uniqueness.
 
     # ── CRUD ──────────────────────────────────────────────────────────
 
