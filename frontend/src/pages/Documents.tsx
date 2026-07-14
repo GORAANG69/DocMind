@@ -5,7 +5,8 @@ import {
   AlertTriangle, FileSpreadsheet, Code, Table
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { ApiClient, TaskProgress } from '../api/client';
+import { ApiClient } from '../api/client';
+import type { TaskProgress } from '../api/client';
 
 const SUPPORTED_EXTENSIONS = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'json'];
 
@@ -33,7 +34,6 @@ const Documents = () => {
   const [uploadSummary,    setUploadSummary]    = useState<{ successful: number; failed: number } | null>(null);
 
   // Async task polling
-  const [taskId,    setTaskId]    = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fileInputRef   = useRef<HTMLInputElement>(null);
@@ -75,7 +75,6 @@ const Documents = () => {
     setFailedFilesList(failures);
     setUploadSummary({ successful, failed });
     setUploading(false);
-    setTaskId(null);
     setCurrentFilename('');
     setRemainingTimeText('');
     await fetchDocuments();
@@ -102,7 +101,6 @@ const Documents = () => {
       return;
     }
 
-    setTaskId(task.task_id);
     setUploadStats({ total: task.total_files, completed: 0, successful: 0, failed: 0 });
     setCurrentFilename('Waiting for background worker…');
     setRemainingTimeText('Indexing in progress…');
