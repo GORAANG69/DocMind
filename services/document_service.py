@@ -211,6 +211,7 @@ class DocumentService:
 
         # Compute storage size — prefer DB value to avoid N disk stat() calls.
         # Fall back to disk stat only when the DB value is stale (0).
+        size_sum = 0
         for d in docs:
             if d.file_size and d.file_size > 0:
                 size_sum += d.file_size

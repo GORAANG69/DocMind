@@ -1,4 +1,12 @@
-"""Search panel — global full-text search across all documents."""
+"""Search panel — global full-text search across all documents.
+
+Results are displayed grouped by document using a QTreeWidget.
+Each document is a top-level node; individual page/sheet/cell hits
+are expandable children.
+
+Search state (query + options) is persisted to SQLite settings so
+it survives application restarts.
+"""
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
@@ -6,28 +14,32 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QFrame,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
-    QListWidget,
-    QListWidgetItem,
     QPushButton,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
-from services.search_service import SearchService
+from database.db_manager import DatabaseManager
+from services.search_service import GroupedSearchResult, SearchService
 
 
 class SearchPanel(QWidget):
-    """Global search page with options and results list."""
+    """Global search page with options and grouped results tree."""
 
     document_open = pyqtSignal(str, str, object, object, object)  # doc_id, query, page, sheet, cell
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._search_service = SearchService()
-        self._current_results = []
+        self._db = DatabaseManager()
+        self._current_results: list[GroupedSearchResult] = []
         self._setup_ui()
+        self._restore_search_state()
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -182,11 +194,16 @@ class SearchPanel(QWidget):
 
         layout.addLayout(opts_layout)
 
-        # ── Results ───────────────────────────────────────────────────
-        self._results_list = QListWidget()
-        self._results_list.setStyleSheet(
+        # ── Results tree (grouped by document) ────────────────────────
+        self._results_tree = QTreeWidget()
+        self._results_tree.setHeaderLabels(["Document / Location", "Matches", "Snippet"])
+        self._results_tree.setColumnCount(3)
+        self._results_tree.setAlternatingRowColors(False)
+        self._results_tree.setRootIsDecorated(True)
+        self._results_tree.setAnimated(True)
+        self._results_tree.setStyleSheet(
             """
-            QListWidget {
+            QTreeWidget {
                 background: #0d1117;
                 border: 1px solid #30363d;
                 border-radius: 10px;
@@ -194,20 +211,33 @@ class SearchPanel(QWidget):
                 color: #e6edf3;
                 font-size: 13px;
             }
-            QListWidget::item {
-                padding: 12px 16px;
-                border-radius: 8px;
-                margin-bottom: 4px;
+            QTreeWidget::item {
+                padding: 8px 10px;
+                border-radius: 6px;
             }
-            QListWidget::item:hover { background: #161b22; }
-            QListWidget::item:selected {
+            QTreeWidget::item:hover { background: #161b22; }
+            QTreeWidget::item:selected {
                 background: #1f3a5f;
                 color: #58a6ff;
             }
+            QHeaderView::section {
+                background: #161b22;
+                color: #8b949e;
+                border: none;
+                border-bottom: 1px solid #30363d;
+                padding: 6px 10px;
+                font-size: 12px;
+                font-weight: 600;
+            }
             """
         )
-        self._results_list.itemDoubleClicked.connect(self._on_result_clicked)
-        layout.addWidget(self._results_list, 1)
+        self._results_tree.itemDoubleClicked.connect(self._on_result_clicked)
+        header = self._results_tree.header()
+        header.setStretchLastSection(True)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(self._results_tree, 1)
 
         # Empty state
         self._empty_label = QLabel("Enter a search query above to find text across all your documents.")
@@ -215,6 +245,34 @@ class SearchPanel(QWidget):
         self._empty_label.setFont(QFont("Segoe UI", 13))
         self._empty_label.setStyleSheet("color: #484f58; padding: 60px;")
         layout.addWidget(self._empty_label)
+
+    # ── Search persistence ────────────────────────────────────────────
+
+    def _save_search_state(self):
+        """Persist the current search query and options to the database."""
+        query = self._search_input.text().strip()
+        self._db.set_setting("search_last_query", query)
+        self._db.set_setting("search_mode", self._search_mode_combo.currentText())
+        self._db.set_setting("search_case_sensitive", "1" if self._case_check.isChecked() else "0")
+        self._db.set_setting("search_whole_word", "1" if self._whole_word_check.isChecked() else "0")
+
+    def _restore_search_state(self):
+        """Restore the last search query and options from the database, and re-run the search."""
+        query = self._db.get_setting("search_last_query") or ""
+        mode = self._db.get_setting("search_mode") or "Exact Phrase"
+        case_sensitive = self._db.get_setting("search_case_sensitive") == "1"
+        whole_word = self._db.get_setting("search_whole_word") == "1"
+
+        self._search_input.setText(query)
+        idx = self._search_mode_combo.findText(mode)
+        if idx >= 0:
+            self._search_mode_combo.setCurrentIndex(idx)
+        self._case_check.setChecked(case_sensitive)
+        self._whole_word_check.setChecked(whole_word)
+
+        # Re-execute the search silently if there was a previous query
+        if query:
+            self._do_search()
 
     # ── Search logic ──────────────────────────────────────────────────
 
@@ -230,21 +288,22 @@ class SearchPanel(QWidget):
             whole_word=self._whole_word_check.isChecked(),
             exact_phrase=exact_phrase,
         )
+        self._save_search_state()
         self._apply_sort(self._sort_combo.currentText())
 
     def _apply_sort(self, sort_key: str):
         if not self._current_results:
-            self._results_list.clear()
-            self._results_list.setVisible(False)
+            self._results_tree.clear()
+            self._results_tree.setVisible(False)
             self._empty_label.setVisible(True)
             self._result_count_label.setText("0 matches")
             return
 
         results = list(self._current_results)
         if sort_key == "Matches (High to Low)":
-            results.sort(key=lambda r: r.match_count, reverse=True)
+            results.sort(key=lambda r: r.total_matches, reverse=True)
         elif sort_key == "Matches (Low to High)":
-            results.sort(key=lambda r: r.match_count)
+            results.sort(key=lambda r: r.total_matches)
         elif sort_key == "Filename (A to Z)":
             results.sort(key=lambda d: d.filename.lower())
         elif sort_key == "Filename (Z to A)":
@@ -252,12 +311,12 @@ class SearchPanel(QWidget):
 
         self._display_results(results)
 
-    def _display_results(self, results: list):
-        self._results_list.clear()
+    def _display_results(self, results: list[GroupedSearchResult]):
+        self._results_tree.clear()
         self._empty_label.setVisible(False)
-        self._results_list.setVisible(True)
+        self._results_tree.setVisible(True)
 
-        total_matches = sum(r.match_count for r in results)
+        total_matches = sum(r.total_matches for r in results)
         self._result_count_label.setText(
             f"{total_matches} match{'es' if total_matches != 1 else ''} "
             f"in {len(results)} document{'s' if len(results) != 1 else ''}"
@@ -268,40 +327,82 @@ class SearchPanel(QWidget):
             ".docx": "📘",
             ".xlsx": "📗",
             ".xls": "📗",
-            ".txt": "📄"
+            ".txt": "📄",
+            ".csv": "📊",
+            ".json": "📋",
         }
 
         for result in results:
             icon = icon_map.get(result.file_type, "📄")
-            
-            if result.page_number is not None:
-                loc_str = f"Page {result.page_number}"
-            elif result.sheet_name is not None:
-                loc_str = f"Sheet: {result.sheet_name}, Cell: {result.cell_ref}"
+            display_name = result.original_filename or result.filename
+
+            # Build location summary
+            if result.pages:
+                loc = f"across {len(result.pages)} page{'s' if len(result.pages) != 1 else ''}"
+            elif result.sheets:
+                loc = f"in {len(result.sheets)} cell{'s' if len(result.sheets) != 1 else ''}"
             else:
-                loc_str = ""
+                loc = ""
 
-            loc_part = f"    —    {loc_str}" if loc_str else ""
-            
-            item_text = (
-                f"{icon}  {result.filename}{loc_part}    —    {result.match_count} match"
-                f"{'es' if result.match_count != 1 else ''}\n"
-                f"      \"{result.snippet}\""
-            )
-            item = QListWidgetItem(item_text)
-            
-            # Save coordinates
-            coord_data = {
+            doc_label = f"{icon}  {display_name}"
+            if loc:
+                doc_label += f"    —    {loc}"
+
+            # Top-level item for the document
+            doc_item = QTreeWidgetItem([
+                doc_label,
+                str(result.total_matches),
+                result.snippet if result.snippet else "",
+            ])
+            doc_item.setFont(0, QFont("Segoe UI", 12, QFont.Weight.DemiBold))
+            doc_item.setFont(1, QFont("Segoe UI", 11, QFont.Weight.Bold))
+
+            # Attach coordinates for double-click navigation
+            doc_item.setData(0, Qt.ItemDataRole.UserRole, {
                 "doc_id": result.doc_id,
-                "page_number": result.page_number,
-                "sheet_name": result.sheet_name,
-                "cell_ref": result.cell_ref
-            }
-            item.setData(Qt.ItemDataRole.UserRole, coord_data)
-            self._results_list.addItem(item)
+                "page_number": result.pages[0].page_number if result.pages else None,
+                "sheet_name": result.sheets[0].sheet_name if result.sheets else None,
+                "cell_ref": result.sheets[0].cell_ref if result.sheets else None,
+            })
 
-    def _on_result_clicked(self, item: QListWidgetItem):
-        data = item.data(Qt.ItemDataRole.UserRole)
+            # ── Child items: page-level hits (PDF) ────────────────────
+            for page in result.pages:
+                child = QTreeWidgetItem([
+                    f"    📄  Page {page.page_number}",
+                    str(page.match_count),
+                    f'"{page.snippet}"' if page.snippet else "",
+                ])
+                child.setData(0, Qt.ItemDataRole.UserRole, {
+                    "doc_id": result.doc_id,
+                    "page_number": page.page_number,
+                    "sheet_name": None,
+                    "cell_ref": None,
+                })
+                doc_item.addChild(child)
+
+            # ── Child items: sheet/cell-level hits (Excel/CSV) ────────
+            for sheet in result.sheets:
+                child = QTreeWidgetItem([
+                    f"    📊  {sheet.sheet_name} [{sheet.cell_ref}]",
+                    str(sheet.match_count),
+                    f'"{sheet.snippet}"' if sheet.snippet else "",
+                ])
+                child.setData(0, Qt.ItemDataRole.UserRole, {
+                    "doc_id": result.doc_id,
+                    "page_number": None,
+                    "sheet_name": sheet.sheet_name,
+                    "cell_ref": sheet.cell_ref,
+                })
+                doc_item.addChild(child)
+
+            self._results_tree.addTopLevelItem(doc_item)
+
+            # Auto-expand documents with a small number of child hits
+            if doc_item.childCount() <= 10:
+                doc_item.setExpanded(True)
+
+    def _on_result_clicked(self, item: QTreeWidgetItem, column: int):
+        data = item.data(0, Qt.ItemDataRole.UserRole)
         if data:
             query = self._search_input.text().strip()
             self.document_open.emit(
@@ -309,7 +410,7 @@ class SearchPanel(QWidget):
                 query,
                 data.get("page_number"),
                 data.get("sheet_name"),
-                data.get("cell_ref")
+                data.get("cell_ref"),
             )
 
     def focus_search(self):

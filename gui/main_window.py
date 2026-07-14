@@ -290,20 +290,19 @@ class MainWindow(QMainWindow):
         self._scan_and_import_folder(path, is_refresh=True)
 
     def _scan_and_import_folder(self, folder_path: Path, is_refresh: bool = False):
-        supported_exts = {".pdf", ".xls", ".xlsx", ".docx", ".txt", ".text", ".md", ".csv", ".log", ".json", ".xml", ".html"}
-        file_paths = []
-        try:
-            for path in folder_path.rglob("*"):
-                if path.is_file() and path.suffix.lower() in supported_exts:
-                    file_paths.append(path)
-        except Exception as exc:
-            QMessageBox.warning(self, "Scan Error", f"Failed to scan folder:\n\n{exc}")
-            return
+        """Start background import by passing the raw directory path to the worker.
 
-        self._import_files(file_paths, is_refresh=is_refresh)
+        Folder scanning (rglob) is handled inside the worker thread so the
+        UI stays responsive even for large or network-mounted directories.
+        """
+        self._start_import([folder_path], is_refresh=is_refresh)
 
-    def _import_files(self, file_paths: list[Path], is_refresh: bool = False):
-        """Start background import of files with a cancelable progress dialog."""
+    def _start_import(self, paths: list[Path], is_refresh: bool = False):
+        """Start background import of files/directories with a cancelable progress dialog.
+
+        ``paths`` can contain a mix of individual files and directories.
+        The worker thread handles recursive scanning for directories.
+        """
         if self._import_worker and self._import_worker.isRunning():
             QMessageBox.information(
                 self, "Import in Progress",
@@ -311,25 +310,20 @@ class MainWindow(QMainWindow):
             )
             return
 
-        total = len(file_paths)
-        if total == 0:
-            QMessageBox.information(
-                self, "No Files Found",
-                "No supported documents were found in the selected folder."
-            )
-            return
-
         from PyQt6.QtWidgets import QProgressDialog
-        self._progress_dialog = QProgressDialog("Scanning documents...", "Cancel", 0, total, self)
-        self._progress_dialog.setWindowTitle("Indexing Research Papers..." if not is_refresh else "Refreshing Research Folder...")
+        # Set maximum to 0 initially (indeterminate) — the worker will
+        # update us with the real total once folder scanning finishes.
+        self._progress_dialog = QProgressDialog("Scanning folders for documents…", "Cancel", 0, 0, self)
+        self._progress_dialog.setWindowTitle("Indexing Research Papers…" if not is_refresh else "Refreshing Research Folder…")
         self._progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
         self._progress_dialog.setMinimumDuration(0)
         self._progress_dialog.setValue(0)
         self._progress_dialog.canceled.connect(self._cancel_import)
 
         self._start_time = time.time()
-        self._import_worker = ImportWorker(file_paths, self)
+        self._import_worker = ImportWorker(paths, self)
         self._import_worker.progress.connect(self._on_import_progress)
+        self._import_worker.status_message.connect(self._on_import_status)
         self._import_worker.file_error.connect(self._on_import_error)
         self._import_worker.all_done.connect(self._on_import_done)
         self._import_worker.start()
@@ -338,11 +332,19 @@ class MainWindow(QMainWindow):
         if self._import_worker:
             self._import_worker.cancel()
 
+    def _on_import_status(self, message: str):
+        """Update progress dialog label during folder-scan phase."""
+        if self._progress_dialog:
+            self._progress_dialog.setLabelText(message)
+
     def _on_import_progress(self, current: int, total: int, filename: str):
         if self._progress_dialog:
+            # Switch from indeterminate to determinate on first progress tick
+            if self._progress_dialog.maximum() != total:
+                self._progress_dialog.setMaximum(total)
             self._progress_dialog.setValue(current)
             self._progress_dialog.setLabelText(
-                f"Scanning documents...\n\n"
+                f"Indexing documents…\n\n"
                 f"Processing paper {current} of {total}\n\n"
                 f"Current File:\n{filename}"
             )
@@ -436,25 +438,20 @@ class MainWindow(QMainWindow):
 
     def dropEvent(self, event: QDropEvent):
         urls = event.mimeData().urls()
-        file_paths = []
-        supported_exts = {".pdf", ".xls", ".xlsx", ".docx", ".txt", ".text", ".md", ".csv", ".log", ".json", ".xml", ".html"}
+        paths = []
         for url in urls:
             path = Path(url.toLocalFile())
-            if path.is_file() and path.suffix.lower() in supported_exts:
-                file_paths.append(path)
-            elif path.is_dir():
-                try:
-                    for subpath in path.rglob("*"):
-                        if subpath.is_file() and subpath.suffix.lower() in supported_exts:
-                            file_paths.append(subpath)
-                except Exception:
-                    pass
+            if path.exists():
+                paths.append(path)
 
-        if file_paths:
-            self._import_files(file_paths)
+        if paths:
+            # Pass raw paths (files + directories) to the worker which
+            # handles scanning and filtering on its background thread.
+            self._start_import(paths)
         elif urls:
+            from gui.workers import SUPPORTED_EXTENSIONS
             QMessageBox.information(
                 self, "Unsupported Files",
                 f"No supported documents were found.\n\n"
-                f"Supported: {', '.join(supported_exts)}"
+                f"Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}"
             )
