@@ -156,32 +156,34 @@ class DatabaseManager:
 
     def insert_document(self, doc: Document, extracted_text: str = "") -> None:
         """Insert a new document record."""
+        cursor = self._conn.execute("PRAGMA table_info(documents)")
+        cols = {r["name"] for r in cursor.fetchall()}
+        cursor.close()
+
+        fields = [
+            "id", "filename", "original_path", "stored_path", "extracted_text_path",
+            "file_type", "file_size", "word_count", "unique_words", "char_count",
+            "line_count", "sha256", "extracted_text", "created_at"
+        ]
+        vals = [
+            doc.id, doc.filename, doc.original_path, doc.stored_path, doc.extracted_text_path,
+            doc.file_type, doc.file_size, doc.word_count, doc.unique_words, doc.char_count,
+            doc.line_count, doc.sha256, extracted_text, doc.created_at
+        ]
+
+        if "original_filename" in cols:
+            fields.append("original_filename")
+            vals.append(doc.original_filename)
+        if "stored_filename" in cols:
+            fields.append("stored_filename")
+            vals.append(doc.stored_filename)
+
+        placeholders = ", ".join(["?"] * len(fields))
+        field_str = ", ".join(fields)
+
         self._conn.execute(
-            """
-            INSERT INTO documents
-                (id, filename, original_path, stored_path, extracted_text_path,
-                 file_type, file_size, word_count, unique_words, char_count,
-                 line_count, sha256, extracted_text, created_at, original_filename, stored_filename)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                doc.id,
-                doc.filename,
-                doc.original_path,
-                doc.stored_path,
-                doc.extracted_text_path,
-                doc.file_type,
-                doc.file_size,
-                doc.word_count,
-                doc.unique_words,
-                doc.char_count,
-                doc.line_count,
-                doc.sha256,
-                extracted_text,
-                doc.created_at,
-                doc.original_filename,
-                doc.stored_filename,
-            ),
+            f"INSERT INTO documents ({field_str}) VALUES ({placeholders})",
+            vals
         )
         self._conn.commit()
 
@@ -247,13 +249,19 @@ class DatabaseManager:
         Basic content search using SQLite LIKE.
         Returns list of (id, filename, file_type, extracted_text).
         """
+        cursor = self._conn.execute("PRAGMA table_info(documents)")
+        cols = {r["name"] for r in cursor.fetchall()}
+        cursor.close()
+
+        filename_col = "COALESCE(NULLIF(original_filename, ''), filename)" if "original_filename" in cols else "filename"
+
         rows = self._conn.execute(
-            """
-            SELECT id, COALESCE(NULLIF(original_filename, ''), filename) AS filename, file_type, extracted_text
+            f"""
+            SELECT id, {filename_col} AS filename, file_type, extracted_text
             FROM documents
-            WHERE extracted_text LIKE ?
+            WHERE lower(extracted_text) LIKE ?
             """,
-            (f"%{query}%",),
+            (f"%{query.lower()}%",),
         ).fetchall()
         return [(r["id"], r["filename"], r["file_type"], r["extracted_text"]) for r in rows]
 
