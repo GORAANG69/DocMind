@@ -8,7 +8,7 @@ from database.db_manager import DatabaseManager
 
 @dataclass
 class SearchResult:
-    """A single search match."""
+    """A single search match (legacy, kept for backward compatibility)."""
 
     doc_id: str
     filename: str
@@ -20,6 +20,45 @@ class SearchResult:
     cell_ref: Optional[str] = None
     positions: list[int] = field(default_factory=list)
     original_filename: str = ""
+
+
+@dataclass
+class PageMatch:
+    """A single page-level match within a document."""
+
+    page_number: int
+    match_count: int
+    snippet: str
+    positions: list[int] = field(default_factory=list)
+
+
+@dataclass
+class SheetMatch:
+    """A single sheet/cell-level match within a spreadsheet document."""
+
+    sheet_name: str
+    cell_ref: str
+    match_count: int
+    snippet: str
+    positions: list[int] = field(default_factory=list)
+
+
+@dataclass
+class GroupedSearchResult:
+    """Search results grouped by document.
+
+    One instance per document, containing all page/sheet-level hits.
+    """
+
+    doc_id: str
+    filename: str
+    file_type: str
+    original_filename: str
+    total_matches: int = 0
+    pages: list[PageMatch] = field(default_factory=list)
+    sheets: list[SheetMatch] = field(default_factory=list)
+    # For non-paged documents (txt, docx, json), store a single snippet
+    snippet: str = ""
 
 
 class SearchService:
@@ -35,9 +74,14 @@ class SearchService:
         case_sensitive: bool = False,
         whole_word: bool = False,
         exact_phrase: bool = True,
-    ) -> list[SearchResult]:
+    ) -> list[GroupedSearchResult]:
         """
         Search all documents for the query string.
+
+        Results are grouped by document — each document appears at most once.
+        For PDFs, individual page hits are nested under ``pages``.
+        For spreadsheets, individual cell hits are nested under ``sheets``.
+        For text/docx/other, a single snippet is stored at the top level.
 
         Args:
             query: The search term or phrase.
@@ -46,7 +90,7 @@ class SearchService:
             exact_phrase: If True, treat query as an exact phrase.
 
         Returns:
-            List of SearchResult sorted by match_count descending.
+            List of GroupedSearchResult sorted by total_matches descending.
         """
         if not query.strip():
             return []
@@ -74,7 +118,9 @@ class SearchService:
         like_query = first_word if case_sensitive else first_word.lower()
         rows = self._db.search_content(like_query)
 
-        results: list[SearchResult] = []
+        # Collect results grouped by doc_id
+        grouped: dict[str, GroupedSearchResult] = {}
+
         for doc_id, filename, file_type, text in rows:
             if file_type == ".pdf":
                 # PDF: split by Form Feed page boundaries
@@ -91,19 +137,24 @@ class SearchService:
                         snippet = "..." + snippet
                     if end < len(page_text):
                         snippet = snippet + "..."
-                        
-                    results.append(
-                        SearchResult(
+
+                    page_match = PageMatch(
+                        page_number=page_idx,
+                        match_count=len(matches),
+                        snippet=snippet,
+                        positions=[m.start() for m in matches],
+                    )
+
+                    if doc_id not in grouped:
+                        grouped[doc_id] = GroupedSearchResult(
                             doc_id=doc_id,
                             filename=filename,
                             file_type=file_type,
-                            snippet=snippet,
-                            match_count=len(matches),
-                            page_number=page_idx,
-                            positions=[m.start() for m in matches],
                             original_filename=filename,
                         )
-                    )
+                    grouped[doc_id].pages.append(page_match)
+                    grouped[doc_id].total_matches += len(matches)
+
             elif file_type in (".xlsx", ".xls", ".csv"):
                 # Excel/CSV: split by lines, each line is sheet\tcell\tvalue
                 lines = text.split("\n")
@@ -124,20 +175,25 @@ class SearchService:
                             snippet = "..." + snippet
                         if end < len(cell_value):
                             snippet = snippet + "..."
-                            
-                        results.append(
-                            SearchResult(
+
+                        sheet_match = SheetMatch(
+                            sheet_name=sheet_name,
+                            cell_ref=cell_ref,
+                            match_count=len(matches),
+                            snippet=snippet,
+                            positions=[m.start() for m in matches],
+                        )
+
+                        if doc_id not in grouped:
+                            grouped[doc_id] = GroupedSearchResult(
                                 doc_id=doc_id,
                                 filename=filename,
                                 file_type=file_type,
-                                snippet=snippet,
-                                match_count=len(matches),
-                                sheet_name=sheet_name,
-                                cell_ref=cell_ref,
-                                positions=[m.start() for m in matches],
                                 original_filename=filename,
                             )
-                        )
+                        grouped[doc_id].sheets.append(sheet_match)
+                        grouped[doc_id].total_matches += len(matches)
+
             else:
                 # Text / DOCX / other: search entire text
                 matches = list(pattern.finditer(text))
@@ -151,18 +207,17 @@ class SearchService:
                     snippet = "..." + snippet
                 if end < len(text):
                     snippet = snippet + "..."
-                    
-                results.append(
-                    SearchResult(
+
+                if doc_id not in grouped:
+                    grouped[doc_id] = GroupedSearchResult(
                         doc_id=doc_id,
                         filename=filename,
                         file_type=file_type,
-                        snippet=snippet,
-                        match_count=len(matches),
-                        positions=[m.start() for m in matches],
                         original_filename=filename,
                     )
-                )
+                grouped[doc_id].snippet = snippet
+                grouped[doc_id].total_matches += len(matches)
 
-        results.sort(key=lambda r: r.match_count, reverse=True)
+        # Sort by total_matches descending
+        results = sorted(grouped.values(), key=lambda r: r.total_matches, reverse=True)
         return results

@@ -1,5 +1,15 @@
 export const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
+export interface TaskProgress {
+  id: string;
+  status: 'pending' | 'running' | 'done';
+  total_files: number;
+  completed: number;
+  successful: number;
+  failed: number;
+  files: Array<{ original_filename: string; status: string; error: string }>;
+}
+
 export class ApiClient {
   static async uploadDocument(file: File): Promise<any> {
     const formData = new FormData();
@@ -30,7 +40,7 @@ export class ApiClient {
     return Array.isArray(data) ? data : (data.documents ?? []);
   }
 
-  /** Returns a plain array of search result objects. */
+  /** Returns a plain array of grouped search result objects. */
   static async search(query: string): Promise<any[]> {
     const url = `${API_BASE_URL}/api/search?q=${encodeURIComponent(query)}`;
     const response = await fetch(url);
@@ -40,7 +50,6 @@ export class ApiClient {
       throw new Error(detail);
     }
     const data = await response.json();
-    // Backend returns a raw JSON array — NOT { results: [] }
     return Array.isArray(data) ? data : (data.results ?? []);
   }
 
@@ -92,6 +101,52 @@ export class ApiClient {
       method: 'POST',
     });
     if (!response.ok) throw new Error('Failed to clear search cache');
+    return response.json();
+  }
+
+  /**
+   * Async batch upload — saves files server-side immediately and returns a
+   * task_id for progress polling. Does NOT block until indexing completes.
+   *
+   * For folder uploads, pass the webkitRelativePath as the x-relative-path
+   * header on each file so the backend can store folder-relative metadata.
+   */
+  static async uploadAsync(
+    files: File[],
+    onProgress?: (saved: number, total: number) => void,
+  ): Promise<{ task_id: string; total_files: number; status: string }> {
+    const formData = new FormData();
+
+    files.forEach((file, idx) => {
+      // Use the relative path from webkitdirectory uploads when available
+      const relativePath = (file as any).webkitRelativePath || '';
+      // We cannot set custom headers per FormData part, so embed the
+      // relative path as a companion field name pattern: file_rel_{idx}
+      formData.append('files', file, file.name);
+      if (relativePath) {
+        formData.append(`rel_${idx}`, relativePath);
+      }
+      if (onProgress) onProgress(idx + 1, files.length);
+    });
+
+    const response = await fetch(`${API_BASE_URL}/api/upload/async`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      let detail = 'Async upload failed';
+      try { detail = (await response.json()).detail || detail; } catch {}
+      throw new Error(detail);
+    }
+
+    return response.json();
+  }
+
+  /** Poll the progress of an async indexing task. */
+  static async getTaskProgress(taskId: string): Promise<TaskProgress> {
+    const response = await fetch(`${API_BASE_URL}/api/task/${taskId}`);
+    if (!response.ok) throw new Error('Task not found');
     return response.json();
   }
 }

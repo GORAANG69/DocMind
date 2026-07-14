@@ -298,7 +298,18 @@ const DocumentViewer: React.FC = () => {
         backgroundColor: 'var(--bg-secondary)', borderBottom: '1px solid var(--border-color)',
         flexShrink: 0, zIndex: 10,
       }}>
-        <button className="btn btn-secondary" style={{ padding: '0.4rem 0.75rem' }} onClick={() => navigate(-1)}>
+        <button
+          className="btn btn-secondary"
+          style={{ padding: '0.4rem 0.75rem' }}
+          onClick={() => {
+            // If opened from search, return to /search so sessionStorage state is restored
+            if (searchParams.get('from') === 'search') {
+              navigate('/search');
+            } else {
+              navigate(-1);
+            }
+          }}
+        >
           <ArrowLeft size={16} /> Back
         </button>
 

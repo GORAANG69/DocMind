@@ -1,65 +1,69 @@
-import { useState, useEffect } from 'react';
-import { FileText, Database, ArrowRight, LayoutDashboard, FileSpreadsheet, Code, Table, Search } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { FileText, Database, ArrowRight, LayoutDashboard, FileSpreadsheet, Code, Table, Search, AlertCircle, RefreshCw } from 'lucide-react';
 import { ApiClient } from '../api/client';
 import { useNavigate } from 'react-router-dom';
 
+interface Stats {
+  totalDocuments: number;
+  totalSize: number;
+  pdfCount: number;
+  docxCount: number;
+  xlsxCount: number;
+  csvCount: number;
+  jsonCount: number;
+}
+
+const EMPTY_STATS: Stats = {
+  totalDocuments: 0,
+  totalSize: 0,
+  pdfCount: 0,
+  docxCount: 0,
+  xlsxCount: 0,
+  csvCount: 0,
+  jsonCount: 0,
+};
+
 const Dashboard = () => {
   const navigate = useNavigate();
-  const [stats, setStats] = useState({
-    totalDocuments: 0,
-    totalSize: 0,
-    pdfCount: 0,
-    docxCount: 0,
-    xlsxCount: 0,
-    csvCount: 0,
-    jsonCount: 0,
-  });
+  const [stats, setStats] = useState<Stats>(EMPTY_STATS);
   const [loading, setLoading] = useState(true);
+  const [statsError, setStatsError] = useState<string | null>(null);
 
-  const fetchStats = async () => {
+  const fetchStats = useCallback(async () => {
+    setLoading(true);
+    setStatsError(null);
     try {
       const data = await ApiClient.getStats();
       setStats({
-        totalDocuments: data.totalDocuments ?? 0,
-        totalSize: data.totalSize ?? 0,
-        pdfCount: data.pdfCount ?? 0,
-        docxCount: data.docxCount ?? 0,
-        xlsxCount: data.xlsxCount ?? 0,
-        csvCount: data.csvCount ?? 0,
-        jsonCount: data.jsonCount ?? 0,
+        totalDocuments: data.totalDocuments ?? data.total_documents ?? 0,
+        totalSize:      data.totalSize      ?? data.total_size      ?? 0,
+        pdfCount:       data.pdfCount       ?? data.pdf_count       ?? 0,
+        docxCount:      data.docxCount      ?? data.docx_count      ?? 0,
+        xlsxCount:      data.xlsxCount      ?? data.xlsx_count      ?? 0,
+        csvCount:       data.csvCount       ?? data.csv_count       ?? 0,
+        jsonCount:      data.jsonCount      ?? data.json_count       ?? 0,
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to fetch stats:', error);
-      // Fallback for development
-      setStats({
-        totalDocuments: 0,
-        totalSize: 0,
-        pdfCount: 0,
-        docxCount: 0,
-        xlsxCount: 0,
-        csvCount: 0,
-        jsonCount: 0,
-      });
+      // Keep previously loaded stats visible — show an error banner instead of zeroing
+      setStatsError('Could not refresh statistics. The backend may be unavailable.');
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchStats();
 
-    // Refresh immediately when Documents page signals a change (upload / delete)
+    // Refresh when Documents page signals an upload / delete
     const handleStatsChanged = () => fetchStats();
     window.addEventListener('docmind:stats-changed', handleStatsChanged);
 
-    // Fallback polling every 30 seconds to catch any external changes
-    const interval = setInterval(fetchStats, 30_000);
-
+    // No polling — rely solely on the event and initial fetch
     return () => {
       window.removeEventListener('docmind:stats-changed', handleStatsChanged);
-      clearInterval(interval);
     };
-  }, []);
+  }, [fetchStats]);
 
   const formatSize = (bytes: number) => {
     if (!bytes) return '0 B';
@@ -75,7 +79,40 @@ const Dashboard = () => {
         <h1 className="page-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <LayoutDashboard size={22} color="var(--accent-primary)" /> Dashboard
         </h1>
+        <button
+          className="btn btn-secondary"
+          style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}
+          onClick={fetchStats}
+          disabled={loading}
+          title="Refresh statistics"
+        >
+          <RefreshCw size={14} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
+          Refresh
+        </button>
       </div>
+
+      {/* Error banner — shown instead of silently zeroing stats */}
+      {statsError && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '0.75rem',
+          padding: '0.85rem 1.25rem',
+          backgroundColor: 'rgba(239,68,68,0.08)',
+          border: '1px solid rgba(239,68,68,0.2)',
+          borderRadius: 'var(--radius-md)',
+          color: 'var(--danger)',
+          fontSize: '0.9rem',
+          marginBottom: '1.5rem',
+        }}>
+          <AlertCircle size={16} />
+          <span style={{ flex: 1 }}>{statsError}</span>
+          <button
+            onClick={fetchStats}
+            style={{ color: 'var(--danger)', textDecoration: 'underline', fontSize: '0.85rem' }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* Main Stats Grid */}
       <div className="dashboard-grid" style={{ marginBottom: '2rem' }}>
@@ -224,6 +261,10 @@ const Dashboard = () => {
           </div>
         </div>
       </div>
+
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); } }
+      `}</style>
     </div>
   );
 };

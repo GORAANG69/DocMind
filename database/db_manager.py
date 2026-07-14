@@ -97,6 +97,33 @@ class DatabaseManager:
                 citations TEXT DEFAULT '',
                 created_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS indexing_tasks (
+                id TEXT PRIMARY KEY,
+                status TEXT NOT NULL DEFAULT 'pending',
+                total_files INTEGER DEFAULT 0,
+                completed INTEGER DEFAULT 0,
+                successful INTEGER DEFAULT 0,
+                failed INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS indexing_task_files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT NOT NULL,
+                original_filename TEXT NOT NULL,
+                temp_path TEXT NOT NULL,
+                relative_path TEXT DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'pending',
+                error TEXT DEFAULT '',
+                FOREIGN KEY (task_id) REFERENCES indexing_tasks(id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_task_files_task_id
+                ON indexing_task_files(task_id);
+            CREATE INDEX IF NOT EXISTS idx_task_files_status
+                ON indexing_task_files(status);
             """
         )
         self._conn.commit()
@@ -369,3 +396,147 @@ class DatabaseManager:
         self._conn.execute("DELETE FROM search_history")
         self._conn.execute("DELETE FROM chat_history")
         self._conn.commit()
+
+    # ── Indexing Task Queue ───────────────────────────────────────────
+
+    def create_indexing_task(self, task_id: str, total_files: int) -> None:
+        """Create a new indexing task."""
+        from datetime import datetime
+        now = datetime.now().isoformat()
+        self._conn.execute(
+            """
+            INSERT INTO indexing_tasks (id, status, total_files, completed,
+                successful, failed, created_at, updated_at)
+            VALUES (?, 'pending', ?, 0, 0, 0, ?, ?)
+            """,
+            (task_id, total_files, now, now),
+        )
+        self._conn.commit()
+
+    def add_task_file(
+        self,
+        task_id: str,
+        original_filename: str,
+        temp_path: str,
+        relative_path: str = "",
+    ) -> None:
+        """Add a file record to an indexing task."""
+        self._conn.execute(
+            """
+            INSERT INTO indexing_task_files
+                (task_id, original_filename, temp_path, relative_path, status)
+            VALUES (?, ?, ?, ?, 'pending')
+            """,
+            (task_id, original_filename, temp_path, relative_path),
+        )
+        self._conn.commit()
+
+    def get_next_pending_file(self) -> Optional[dict]:
+        """Claim the next pending file across all active tasks.
+
+        Returns None if the queue is empty.
+        Uses a row-level update to atomically mark the row as 'processing'
+        so concurrent workers don't double-process the same file.
+        """
+        row = self._conn.execute(
+            """
+            SELECT itf.id, itf.task_id, itf.original_filename,
+                   itf.temp_path, itf.relative_path
+            FROM indexing_task_files itf
+            JOIN indexing_tasks it ON itf.task_id = it.id
+            WHERE itf.status = 'pending'
+              AND it.status IN ('pending', 'running')
+            ORDER BY itf.id ASC
+            LIMIT 1
+            """
+        ).fetchone()
+        if not row:
+            return None
+        # Mark as processing
+        self._conn.execute(
+            "UPDATE indexing_task_files SET status = 'processing' WHERE id = ?",
+            (row["id"],),
+        )
+        # Mark parent task as running if still pending
+        self._conn.execute(
+            "UPDATE indexing_tasks SET status = 'running', updated_at = ? WHERE id = ? AND status = 'pending'",
+            (self._now(), row["task_id"]),
+        )
+        self._conn.commit()
+        return dict(row)
+
+    def mark_file_done(self, file_id: int, task_id: str) -> None:
+        """Mark a file as successfully indexed and update task counters."""
+        self._conn.execute(
+            "UPDATE indexing_task_files SET status = 'done' WHERE id = ?",
+            (file_id,),
+        )
+        self._conn.execute(
+            """
+            UPDATE indexing_tasks
+            SET completed = completed + 1,
+                successful = successful + 1,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (self._now(), task_id),
+        )
+        self._finish_task_if_complete(task_id)
+        self._conn.commit()
+
+    def mark_file_failed(self, file_id: int, task_id: str, error: str) -> None:
+        """Mark a file as failed and update task counters."""
+        self._conn.execute(
+            "UPDATE indexing_task_files SET status = 'failed', error = ? WHERE id = ?",
+            (error[:500], file_id),
+        )
+        self._conn.execute(
+            """
+            UPDATE indexing_tasks
+            SET completed = completed + 1,
+                failed = failed + 1,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (self._now(), task_id),
+        )
+        self._finish_task_if_complete(task_id)
+        self._conn.commit()
+
+    def _finish_task_if_complete(self, task_id: str) -> None:
+        """Set task status to 'done' when all files have been processed."""
+        row = self._conn.execute(
+            "SELECT total_files, completed FROM indexing_tasks WHERE id = ?",
+            (task_id,),
+        ).fetchone()
+        if row and row["completed"] >= row["total_files"] and row["total_files"] > 0:
+            self._conn.execute(
+                "UPDATE indexing_tasks SET status = 'done', updated_at = ? WHERE id = ?",
+                (self._now(), task_id),
+            )
+
+    def get_indexing_task(self, task_id: str) -> Optional[dict]:
+        """Get current status and progress of an indexing task."""
+        row = self._conn.execute(
+            "SELECT * FROM indexing_tasks WHERE id = ?", (task_id,)
+        ).fetchone()
+        if not row:
+            return None
+        task = dict(row)
+        # Attach file-level results
+        files = self._conn.execute(
+            """
+            SELECT original_filename, status, error
+            FROM indexing_task_files
+            WHERE task_id = ?
+            ORDER BY id ASC
+            """,
+            (task_id,),
+        ).fetchall()
+        task["files"] = [dict(f) for f in files]
+        return task
+
+    @staticmethod
+    def _now() -> str:
+        from datetime import datetime
+        return datetime.now().isoformat()

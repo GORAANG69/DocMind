@@ -27,6 +27,7 @@ from database.db_manager import DatabaseManager
 from services.document_service import DocumentService
 from services.search_service import SearchService
 from services.chat_service import ChatService
+from services.task_worker import start_worker, stop_worker
 from utils.app_paths import BUNDLE_DIR, DATA_DIR, ensure_data_dirs, DB_PATH
 from utils.logger import setup_logging, get_logger
 
@@ -59,11 +60,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── Service Accessors ──────────────────────────────────────────────────────
+# ── Service Accessors ───────────────────────────────────────────
 db_manager = DatabaseManager()
 doc_service = DocumentService(db_manager)
 search_service = SearchService(db_manager)
 chat_service = ChatService(db_manager)
+
+# ── Worker Lifecycle ───────────────────────────────────────────
+@app.on_event("startup")
+async def _startup() -> None:
+    start_worker()
+    log.info("Background indexing worker started.")
+
+@app.on_event("shutdown")
+async def _shutdown() -> None:
+    stop_worker()
+    log.info("Background indexing worker stopped.")
 
 # ── Request / Response Schema models ───────────────────────────────────────
 class IndexFolderRequest(BaseModel):
@@ -334,7 +346,27 @@ def search_documents(
     whole_word: bool = Query(False),
     exact_phrase: bool = Query(True)
 ):
-    """Search for query occurrences across all document files."""
+    """Search for query occurrences across all document files.
+
+    Returns results grouped by document — each document appears at most once.
+    Response shape::
+
+        [
+            {
+                "doc_id": "...",
+                "filename": "Machine.pdf",
+                "file_type": ".pdf",
+                "original_filename": "Machine.pdf",
+                "total_matches": 5,
+                "pages": [
+                    {"page_number": 1, "match_count": 3, "snippet": "...", "positions": [...]},
+                    {"page_number": 2, "match_count": 1, "snippet": "...", "positions": [...]}
+                ],
+                "sheets": [],
+                "snippet": ""
+            }
+        ]
+    """
     if not q.strip():
         return []
         
@@ -487,6 +519,88 @@ def clear_search_cache():
     except Exception as exc:
         log.error("Failed to clear search cache: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
+
+@app.post("/api/upload/async")
+async def upload_async(files: List[UploadFile] = File(...)):
+    """
+    Async batch upload endpoint.
+
+    Saves all uploaded files to a temporary directory immediately, creates an
+    indexing task, enqueues one record per file, then returns the task_id.
+    The background worker picks up and indexes files without blocking the HTTP
+    response.
+
+    Response::
+
+        {"task_id": "<uuid>", "total_files": 42, "status": "pending"}
+    """
+    import uuid as _uuid
+    task_id = str(_uuid.uuid4())
+
+    # Filter to supported extensions only
+    SUPPORTED = {".pdf", ".xls", ".xlsx", ".docx", ".doc", ".txt",
+                 ".text", ".md", ".csv", ".log", ".json", ".xml", ".html"}
+    valid_files = [f for f in files if Path(f.filename or "").suffix.lower() in SUPPORTED]
+
+    if not valid_files:
+        raise HTTPException(
+            status_code=400,
+            detail="No supported files found in the upload. "
+                   "Supported: PDF, DOCX, XLSX, CSV, JSON, TXT."
+        )
+
+    temp_dir = DATA_DIR / "temp" / task_id
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create the task record before saving files
+    db_manager.create_indexing_task(task_id, len(valid_files))
+
+    saved_count = 0
+    for upload in valid_files:
+        try:
+            safe_name = Path(upload.filename or "file").name  # strip any path traversal
+            # Use relative_path header if the browser sent it (folder uploads)
+            rel_path = upload.headers.get("x-relative-path", "") or ""
+            dest = temp_dir / f"{_uuid.uuid4()}_{safe_name}"
+            with open(dest, "wb") as fh:
+                shutil.copyfileobj(upload.file, fh)
+            db_manager.add_task_file(
+                task_id=task_id,
+                original_filename=safe_name,
+                temp_path=str(dest),
+                relative_path=rel_path,
+            )
+            saved_count += 1
+        except Exception as exc:
+            log.error("Failed to save uploaded file %s: %s", upload.filename, exc)
+            db_manager.mark_file_failed(-1, task_id, str(exc))
+
+    log.info("Async upload task %s created: %d files queued.", task_id, saved_count)
+    return {"task_id": task_id, "total_files": len(valid_files), "status": "pending"}
+
+
+@app.get("/api/task/{task_id}")
+def get_task_progress(task_id: str):
+    """
+    Poll indexing task progress.
+
+    Response::
+
+        {
+            "id": "<uuid>",
+            "status": "pending|running|done",
+            "total_files": 42,
+            "completed": 17,
+            "successful": 15,
+            "failed": 2,
+            "files": [{"original_filename": "...", "status": "...", "error": "..."}]
+        }
+    """
+    task = db_manager.get_indexing_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return task
+
 
 # ── Main Entry ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":

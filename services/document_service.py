@@ -209,11 +209,17 @@ class DocumentService:
         # Sum word counts from DB
         word_sum = sum(d.word_count for d in docs)
 
-        # Compute storage size from actual files on disk (fall back to DB value)
-        size_sum = 0
+        # Compute storage size — prefer DB value to avoid N disk stat() calls.
+        # Fall back to disk stat only when the DB value is stale (0).
         for d in docs:
-            p = Path(d.stored_path)
-            size_sum += p.stat().st_size if p.exists() else d.file_size
+            if d.file_size and d.file_size > 0:
+                size_sum += d.file_size
+            else:
+                try:
+                    p = Path(d.stored_path)
+                    size_sum += p.stat().st_size if p.exists() else 0
+                except Exception:
+                    pass
 
         # Compute per-type counts from the document list (no extra DB queries)
         pdf_count = sum(1 for d in docs if d.file_type in ('.pdf', 'pdf'))
@@ -224,11 +230,9 @@ class DocumentService:
 
         avg_words = int(word_sum / doc_count) if doc_count > 0 else 0
 
-        # Largest / smallest by stored-on-disk size
+        # Largest / smallest by DB-stored file size (avoids N disk stat() calls)
         if docs:
-            sorted_by_size = sorted(docs, key=lambda d: (
-                Path(d.stored_path).stat().st_size if Path(d.stored_path).exists() else d.file_size
-            ), reverse=True)
+            sorted_by_size = sorted(docs, key=lambda d: d.file_size, reverse=True)
             largest_doc = f"{sorted_by_size[0].filename} ({self._format_size(sorted_by_size[0].file_size)})"
             smallest_doc = f"{sorted_by_size[-1].filename} ({self._format_size(sorted_by_size[-1].file_size)})"
         else:
