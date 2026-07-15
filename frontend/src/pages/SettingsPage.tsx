@@ -22,6 +22,7 @@ const SettingsPage = () => {
   // Operation states
   const [rebuilding, setRebuilding] = useState(false);
   const [clearing, setClearing] = useState(false);
+  const [clearingLibrary, setClearingLibrary] = useState(false);
   const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Fetch stats from backend
@@ -102,6 +103,21 @@ const SettingsPage = () => {
       showNotification('error', err.message || 'Failed to clear search cache.');
     } finally {
       setClearing(false);
+    }
+  };
+
+  const handleClearLibrary = async () => {
+    if (!window.confirm('Delete all documents and clear your entire library? This cannot be undone.')) return;
+    setClearingLibrary(true);
+    setNotification(null);
+    try {
+      await ApiClient.deleteAllDocuments();
+      showNotification('success', 'Library cleared successfully.');
+      await fetchStats();
+    } catch (err: any) {
+      showNotification('error', err.message || 'Failed to clear library.');
+    } finally {
+      setClearingLibrary(false);
     }
   };
 
@@ -286,6 +302,25 @@ const SettingsPage = () => {
             >
               <Trash2 size={16} />
               {clearing ? 'Clearing Cache...' : 'Clear Search Cache'}
+            </button>
+            <button
+              onClick={handleClearLibrary}
+              disabled={clearingLibrary}
+              className="btn"
+              style={{
+                flex: 1,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '0.5rem',
+                padding: '0.65rem',
+                backgroundColor: 'var(--bg-translucent-danger)',
+                color: 'var(--danger)',
+                border: '1px solid rgba(239, 68, 68, 0.3)'
+              }}
+            >
+              <Trash2 size={16} />
+              {clearingLibrary ? 'Clearing...' : 'Clear Library'}
             </button>
           </div>
         </section>

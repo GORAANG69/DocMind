@@ -24,6 +24,7 @@ class Document:
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     original_filename: str = ""
     stored_filename: str = ""
+    session_id: str = "default"
 
     @property
     def file_size_display(self) -> str:

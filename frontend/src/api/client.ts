@@ -1,5 +1,21 @@
 export const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
+function getSessionId() {
+  let sessionId = sessionStorage.getItem('docmind_session_id');
+  if (!sessionId) {
+    sessionId = crypto.randomUUID();
+    sessionStorage.setItem('docmind_session_id', sessionId);
+  }
+  return sessionId;
+}
+
+const fetchWithSession = (url: string, options: RequestInit = {}) => {
+  const headers = new Headers(options.headers || {});
+  headers.append('X-Session-Id', getSessionId());
+  return fetch(url, { ...options, headers });
+};
+
+
 export interface TaskProgress {
   id: string;
   status: 'pending' | 'running' | 'done';
@@ -15,7 +31,7 @@ export class ApiClient {
     const formData = new FormData();
     formData.append('file', file);
 
-    const response = await fetch(`${API_BASE_URL}/api/upload`, {
+    const response = await fetchWithSession(`${API_BASE_URL}/api/upload`, {
       method: 'POST',
       body: formData,
     });
@@ -31,7 +47,7 @@ export class ApiClient {
 
   /** Returns a plain array of document objects. */
   static async getDocuments(): Promise<any[]> {
-    const response = await fetch(`${API_BASE_URL}/api/documents`);
+    const response = await fetchWithSession(`${API_BASE_URL}/api/documents`);
     if (!response.ok) {
       throw new Error('Failed to fetch documents');
     }
@@ -43,7 +59,7 @@ export class ApiClient {
   /** Returns a plain array of grouped search result objects. */
   static async search(query: string): Promise<any[]> {
     const url = `${API_BASE_URL}/api/search?q=${encodeURIComponent(query)}`;
-    const response = await fetch(url);
+    const response = await fetchWithSession(url);
     if (!response.ok) {
       let detail = 'Search failed';
       try { detail = (await response.json()).detail || detail; } catch {}
@@ -53,8 +69,20 @@ export class ApiClient {
     return Array.isArray(data) ? data : (data.results ?? []);
   }
 
+
+  static async deleteAllDocuments(): Promise<void> {
+    const response = await fetchWithSession(`${API_BASE_URL}/api/documents`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) {
+      let detail = 'Failed to delete all documents';
+      try { detail = (await response.json()).detail || detail; } catch {}
+      throw new Error(detail);
+    }
+  }
+
   static async deleteDocument(docId: string): Promise<void> {
-    const response = await fetch(`${API_BASE_URL}/api/document/${docId}`, {
+    const response = await fetchWithSession(`${API_BASE_URL}/api/document/${docId}`, {
       method: 'DELETE',
     });
     if (!response.ok) {
@@ -70,26 +98,26 @@ export class ApiClient {
   }
 
   static async getDocumentText(docId: string): Promise<string> {
-    const response = await fetch(`${API_BASE_URL}/api/document/${docId}/text`);
+    const response = await fetchWithSession(`${API_BASE_URL}/api/document/${docId}/text`);
     if (!response.ok) throw new Error('Failed to fetch document text');
     const data = await response.json();
     return data.text ?? '';
   }
 
   static async getDocumentMetadata(docId: string): Promise<any> {
-    const response = await fetch(`${API_BASE_URL}/api/document/${docId}`);
+    const response = await fetchWithSession(`${API_BASE_URL}/api/document/${docId}`);
     if (!response.ok) throw new Error('Document not found');
     return response.json();
   }
 
   static async getStats(): Promise<any> {
-    const response = await fetch(`${API_BASE_URL}/api/stats`);
+    const response = await fetchWithSession(`${API_BASE_URL}/api/stats`);
     if (!response.ok) throw new Error('Failed to fetch stats');
     return response.json();
   }
 
   static async rebuildIndex(): Promise<any> {
-    const response = await fetch(`${API_BASE_URL}/api/settings/rebuild`, {
+    const response = await fetchWithSession(`${API_BASE_URL}/api/settings/rebuild`, {
       method: 'POST',
     });
     if (!response.ok) throw new Error('Failed to rebuild search index');
@@ -97,7 +125,7 @@ export class ApiClient {
   }
 
   static async clearSearchCache(): Promise<any> {
-    const response = await fetch(`${API_BASE_URL}/api/settings/clear-cache`, {
+    const response = await fetchWithSession(`${API_BASE_URL}/api/settings/clear-cache`, {
       method: 'POST',
     });
     if (!response.ok) throw new Error('Failed to clear search cache');
@@ -129,7 +157,7 @@ export class ApiClient {
       if (onProgress) onProgress(idx + 1, files.length);
     });
 
-    const response = await fetch(`${API_BASE_URL}/api/upload/async`, {
+    const response = await fetchWithSession(`${API_BASE_URL}/api/upload/async`, {
       method: 'POST',
       body: formData,
     });
@@ -145,7 +173,7 @@ export class ApiClient {
 
   /** Poll the progress of an async indexing task. */
   static async getTaskProgress(taskId: string): Promise<TaskProgress> {
-    const response = await fetch(`${API_BASE_URL}/api/task/${taskId}`);
+    const response = await fetchWithSession(`${API_BASE_URL}/api/task/${taskId}`);
     if (!response.ok) throw new Error('Task not found');
     return response.json();
   }

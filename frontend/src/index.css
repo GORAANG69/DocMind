@@ -197,6 +197,7 @@ button {
 .content-area {
   padding: 2rem;
   flex-grow: 1;
+  min-height: 0;
 }
 
 /* Common UI Components */
@@ -490,11 +491,13 @@ button {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
+  min-height: 0;
 }
 
 .result-card {
   transition: transform 0.2s, box-shadow 0.2s;
   color: var(--text-primary);
+  flex-shrink: 0;
 }
 
 .result-card:hover {

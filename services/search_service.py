@@ -74,6 +74,7 @@ class SearchService:
         case_sensitive: bool = False,
         whole_word: bool = False,
         exact_phrase: bool = True,
+        session_id: str = "default",
     ) -> list[GroupedSearchResult]:
         """
         Search all documents for the query string.
@@ -116,7 +117,7 @@ class SearchService:
         # Pre-filter with SQLite LIKE using a simpler search pattern
         first_word = query.split()[0] if not exact_phrase and query.strip() else query
         like_query = first_word if case_sensitive else first_word.lower()
-        rows = self._db.search_content(like_query)
+        rows = self._db.search_content(like_query, session_id)
 
         # Collect results grouped by doc_id
         grouped: dict[str, GroupedSearchResult] = {}

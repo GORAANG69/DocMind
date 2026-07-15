@@ -44,6 +44,7 @@ class DocumentService:
         source_path: Path,
         original_path: Optional[str] = None,
         original_filename: Optional[str] = None,
+        session_id: str = "default",
     ) -> Optional[Document]:
         """
         Import a single file into DocMind.
@@ -80,15 +81,15 @@ class DocumentService:
 
         # Check duplicate
         orig_path_str = original_path if original_path is not None else str(source_path)
-        dup_status = self._db.check_duplicate(orig_path_str, sha256)
+        dup_status = self._db.check_duplicate(orig_path_str, sha256, session_id)
         if dup_status in ("skip", "skip_hash"):
             return None  # Skipped
         elif dup_status == "update":
             # Path matches but content is different (file was updated)
             # Find and delete old record & files
-            old_doc = self._db.get_document_by_path(orig_path_str)
+            old_doc = self._db.get_document_by_path(orig_path_str, session_id)
             if old_doc:
-                self.delete_document(old_doc.id)
+                self.delete_document(old_doc.id, session_id)
 
         doc_id = str(uuid.uuid4())
         ext = source_path.suffix.lower()
@@ -137,6 +138,7 @@ class DocumentService:
             sha256=sha256,
             original_filename=clean_name,
             stored_filename=stored_filename,
+            session_id=session_id,
         )
 
         self._db.insert_document(doc, extracted_text)
@@ -144,9 +146,9 @@ class DocumentService:
 
     # ── Delete ────────────────────────────────────────────────────────
 
-    def delete_document(self, doc_id: str) -> bool:
+    def delete_document(self, doc_id: str, session_id: str = "default") -> bool:
         """Delete a document and all associated files."""
-        doc = self._db.get_document_by_id(doc_id)
+        doc = self._db.get_document_by_id(doc_id, session_id)
         if doc is None:
             return False
 
@@ -160,7 +162,7 @@ class DocumentService:
         if text.exists():
             text.unlink()
 
-        return self._db.delete_document(doc_id)
+        return self._db.delete_document(doc_id, session_id)
 
     # ── Export ─────────────────────────────────────────────────────────
 
@@ -171,9 +173,9 @@ class DocumentService:
             raise ValueError("No extracted text found for this document.")
         output_path.write_text(text, encoding="utf-8")
 
-    def export_statistics_csv(self, doc_id: str, output_path: Path) -> None:
+    def export_statistics_csv(self, doc_id: str, output_path: Path, session_id: str = "default") -> None:
         """Export document statistics to a CSV file."""
-        doc = self._db.get_document_by_id(doc_id)
+        doc = self._db.get_document_by_id(doc_id, session_id)
         if doc is None:
             raise ValueError("Document not found.")
 
@@ -198,30 +200,30 @@ class DocumentService:
 
     # ── Queries ────────────────────────────────────────────────────────
 
-    def get_all_documents(self) -> list[Document]:
-        return self._db.get_all_documents()
+    def get_all_documents(self, session_id: str = "default") -> list[Document]:
+        return self._db.get_all_documents(session_id)
 
-    def get_document(self, doc_id: str) -> Optional[Document]:
-        return self._db.get_document_by_id(doc_id)
+    def get_document(self, doc_id: str, session_id: str = "default") -> Optional[Document]:
+        return self._db.get_document_by_id(doc_id, session_id)
 
     def get_extracted_text(self, doc_id: str) -> str:
         return self._db.get_extracted_text(doc_id)
 
-    def get_recent_documents(self, limit: int = 10) -> list[Document]:
-        return self._db.get_recent_documents(limit)
+    def get_recent_documents(self, limit: int = 10, session_id: str = "default") -> list[Document]:
+        return self._db.get_recent_documents(limit, session_id)
 
-    def get_total_documents(self) -> int:
-        return self._db.get_document_count()
+    def get_total_documents(self, session_id: str = "default") -> int:
+        return self._db.get_document_count(session_id)
 
-    def get_total_words(self) -> int:
-        return self._db.get_total_words()
+    def get_total_words(self, session_id: str = "default") -> int:
+        return self._db.get_total_words(session_id)
 
-    def get_total_storage(self) -> int:
-        return self._db.get_total_storage()
+    def get_total_storage(self, session_id: str = "default") -> int:
+        return self._db.get_total_storage(session_id)
 
-    def get_library_statistics(self) -> dict:
+    def get_library_statistics(self, session_id: str = "default") -> dict:
         """Calculate aggregate statistics across the entire document library."""
-        docs = self._db.get_all_documents()
+        docs = self._db.get_all_documents(session_id)
         doc_count = len(docs)
 
         # Sum word counts from DB

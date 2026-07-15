@@ -14,7 +14,7 @@ import shutil
 from pathlib import Path
 from typing import Optional, List
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, Query, BackgroundTasks
+from fastapi import FastAPI, File, UploadFile, HTTPException, Query, BackgroundTasks, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
@@ -105,7 +105,7 @@ def get_health():
     }
 
 @app.post("/api/upload")
-async def upload_document(file: UploadFile = File(...)):
+async def upload_document(file: UploadFile = File(...), x_session_id: str = Header("default", alias="X-Session-Id")):
     """Upload a file and index it into the database."""
     log.info("Receive upload request for file: %s", file.filename)
     
@@ -123,7 +123,7 @@ async def upload_document(file: UploadFile = File(...)):
         # Import file using standard document service.
         # Pass the *original browser filename* so it is recorded correctly
         # in the DB even if the temp file path differs.
-        doc = doc_service.import_file(temp_file_path, original_filename=file.filename)
+        doc = doc_service.import_file(temp_file_path, original_filename=file.filename, session_id=x_session_id)
         
         # Clean up temp file and its directory
         if temp_file_path.exists():
@@ -154,7 +154,7 @@ async def upload_document(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=str(exc))
 
 @app.post("/api/upload/multiple")
-async def upload_multiple_documents(files: List[UploadFile] = File(...)):
+async def upload_multiple_documents(files: List[UploadFile] = File(...), x_session_id: str = Header("default", alias="X-Session-Id")):
     """Upload multiple files and index them into the database."""
     log.info("Received batch upload request for %d files", len(files))
     
@@ -175,7 +175,7 @@ async def upload_multiple_documents(files: List[UploadFile] = File(...)):
             with open(temp_file_path, "wb") as f:
                 shutil.copyfileobj(file.file, f)
                 
-            doc = doc_service.import_file(temp_file_path, original_filename=file.filename)
+            doc = doc_service.import_file(temp_file_path, original_filename=file.filename, session_id=x_session_id)
             
             if temp_file_path.exists():
                 temp_file_path.unlink()
@@ -202,27 +202,27 @@ async def upload_multiple_documents(files: List[UploadFile] = File(...)):
     return {"status": "completed", "summary": results}
 
 @app.get("/api/documents")
-def get_documents():
+def get_documents(x_session_id: str = Header("default", alias="X-Session-Id")):
     """List all indexed documents, ordered by creation date."""
     try:
-        docs = doc_service.get_all_documents()
+        docs = doc_service.get_all_documents(session_id=x_session_id)
         return [d.to_dict() for d in docs]
     except Exception as exc:
         log.error("Failed to fetch documents: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
 @app.get("/api/document/{doc_id}")
-def get_document(doc_id: str):
+def get_document(doc_id: str, x_session_id: str = Header("default", alias="X-Session-Id")):
     """Retrieve metadata of a single document by its UUID."""
-    doc = doc_service.get_document(doc_id)
+    doc = doc_service.get_document(doc_id, session_id=x_session_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     return doc.to_dict()
 
 @app.get("/api/document/{doc_id}/download")
-def download_document(doc_id: str):
+def download_document(doc_id: str, x_session_id: str = Header("default", alias="X-Session-Id")):
     """Download or stream the original raw document file."""
-    doc = doc_service.get_document(doc_id)
+    doc = doc_service.get_document(doc_id, session_id=x_session_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
         
@@ -237,9 +237,9 @@ def download_document(doc_id: str):
     )
 
 @app.get("/api/document/{doc_id}/view")
-def view_document(doc_id: str):
+def view_document(doc_id: str, x_session_id: str = Header("default", alias="X-Session-Id")):
     """Stream the document file inline so the browser can render it directly."""
-    doc = doc_service.get_document(doc_id)
+    doc = doc_service.get_document(doc_id, session_id=x_session_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
@@ -275,9 +275,9 @@ def view_document(doc_id: str):
     )
 
 @app.get("/api/document/{doc_id}/text")
-def get_document_text(doc_id: str):
+def get_document_text(doc_id: str, x_session_id: str = Header("default", alias="X-Session-Id")):
     """Retrieve full plain text extracted from a document."""
-    doc = doc_service.get_document(doc_id)
+    doc = doc_service.get_document(doc_id, session_id=x_session_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
         
@@ -285,16 +285,38 @@ def get_document_text(doc_id: str):
     return {"doc_id": doc_id, "filename": doc.filename, "text": text}
 
 @app.delete("/api/document/{doc_id}")
-def delete_document(doc_id: str):
+def delete_document(doc_id: str, x_session_id: str = Header("default", alias="X-Session-Id")):
     """Delete a document, its database record, and its storage cache files."""
     log.info("Request to delete document doc_id=%s", doc_id)
-    success = doc_service.delete_document(doc_id)
+    success = doc_service.delete_document(doc_id, session_id=x_session_id)
     if not success:
         raise HTTPException(status_code=404, detail="Document not found or could not be deleted")
     return {"status": "success", "message": "Document deleted successfully"}
 
+@app.delete("/api/documents")
+def delete_all_documents(x_session_id: str = Header("default", alias="X-Session-Id")):
+    """Delete all documents for the current session."""
+    try:
+        # Delete from disk first
+        docs = doc_service.get_all_documents(session_id=x_session_id)
+        for doc in docs:
+            # Remove stored file
+            stored = Path(doc.stored_path)
+            if stored.exists():
+                stored.unlink()
+            # Remove extracted text file
+            text = Path(doc.extracted_text_path)
+            if text.exists():
+                text.unlink()
+        
+        db_manager.delete_all_documents_for_session(x_session_id)
+        return {"status": "success", "message": "All documents deleted successfully"}
+    except Exception as exc:
+        log.error("Failed to delete all documents: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
 @app.post("/api/index")
-def index_folder(req: IndexFolderRequest, background_tasks: BackgroundTasks):
+def index_folder(req: IndexFolderRequest, background_tasks: BackgroundTasks, x_session_id: str = Header("default", alias="X-Session-Id")):
     """
     Trigger indexing of a local directory on the server.
     Recursively scans the directory and imports all supported files.
@@ -323,7 +345,7 @@ def index_folder(req: IndexFolderRequest, background_tasks: BackgroundTasks):
     
     for path in file_paths:
         try:
-            doc = doc_service.import_file(path)
+            doc = doc_service.import_file(path, session_id=x_session_id)
             if doc is None:
                 skipped_count += 1
             else:
@@ -346,7 +368,8 @@ def search_documents(
     q: str = Query(..., description="Query keyword or exact phrase"),
     case_sensitive: bool = Query(False),
     whole_word: bool = Query(False),
-    exact_phrase: bool = Query(False)
+    exact_phrase: bool = Query(False),
+    x_session_id: str = Header("default", alias="X-Session-Id")
 ):
     """Search for query occurrences across all document files.
 
@@ -380,7 +403,8 @@ def search_documents(
             query=q,
             case_sensitive=case_sensitive,
             whole_word=whole_word,
-            exact_phrase=exact_phrase
+            exact_phrase=exact_phrase,
+            session_id=x_session_id
         )
         return [dataclasses.asdict(r) for r in results]
     except Exception as exc:
@@ -412,19 +436,19 @@ def run_chat_query(req: ChatRequest):
         raise HTTPException(status_code=500, detail=str(exc))
 
 @app.get("/api/stats")
-def get_stats():
+def get_stats(x_session_id: str = Header("default", alias="X-Session-Id")):
     """Retrieve aggregate storage size and word-count stats across all indexed docs."""
     try:
-        return doc_service.get_library_statistics()
+        return doc_service.get_library_statistics(session_id=x_session_id)
     except Exception as exc:
         log.error("Failed to calculate library statistics: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
 @app.get("/api/recent")
-def get_recent():
+def get_recent(x_session_id: str = Header("default", alias="X-Session-Id")):
     """Retrieve the 10 most recently added documents."""
     try:
-        docs = doc_service.get_recent_documents(limit=10)
+        docs = doc_service.get_recent_documents(limit=10, session_id=x_session_id)
         return [d.to_dict() for d in docs]
     except Exception as exc:
         log.error("Failed to retrieve recent documents: %s", exc)
@@ -453,7 +477,7 @@ def delete_history():
         raise HTTPException(status_code=500, detail=str(exc))
 
 @app.post("/api/settings/rebuild")
-def rebuild_search_index():
+def rebuild_search_index(x_session_id: str = Header("default", alias="X-Session-Id")):
     """
     Rebuild search index. Re-reads all stored files, re-extracts their text,
     re-computes statistics, and updates the database records.
@@ -463,7 +487,7 @@ def rebuild_search_index():
         from parsers.parser_factory import ParserFactory
         from services.statistics_service import StatisticsService
         
-        docs = doc_service.get_all_documents()
+        docs = doc_service.get_all_documents(session_id=x_session_id)
         success_count = 0
         error_count = 0
         for doc in docs:
@@ -523,7 +547,7 @@ def clear_search_cache():
         raise HTTPException(status_code=500, detail=str(exc))
 
 @app.post("/api/upload/async")
-async def upload_async(files: List[UploadFile] = File(...)):
+async def upload_async(files: List[UploadFile] = File(...), x_session_id: str = Header("default", alias="X-Session-Id")):
     """
     Async batch upload endpoint.
 
@@ -555,7 +579,7 @@ async def upload_async(files: List[UploadFile] = File(...)):
     temp_dir.mkdir(parents=True, exist_ok=True)
 
     # Create the task record before saving files
-    db_manager.create_indexing_task(task_id, len(valid_files))
+    db_manager.create_indexing_task(task_id, len(valid_files), session_id=x_session_id)
 
     saved_count = 0
     for upload in valid_files:

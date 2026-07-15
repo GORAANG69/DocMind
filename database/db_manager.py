@@ -72,7 +72,8 @@ class DatabaseManager:
                 sha256 TEXT DEFAULT '',
                 created_at TEXT NOT NULL,
                 original_filename TEXT DEFAULT '',
-                stored_filename TEXT DEFAULT ''
+                stored_filename TEXT DEFAULT '',
+                session_id TEXT DEFAULT 'default'
             );
 
             CREATE INDEX IF NOT EXISTS idx_filename ON documents(filename);
@@ -106,7 +107,8 @@ class DatabaseManager:
                 successful INTEGER DEFAULT 0,
                 failed INTEGER DEFAULT 0,
                 created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                updated_at TEXT NOT NULL,
+                session_id TEXT DEFAULT 'default'
             );
 
             CREATE TABLE IF NOT EXISTS indexing_task_files (
@@ -148,6 +150,18 @@ class DatabaseManager:
         except sqlite3.OperationalError:
             pass
 
+        try:
+            self._conn.execute("ALTER TABLE documents ADD COLUMN session_id TEXT DEFAULT 'default'")
+            self._conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
+        try:
+            self._conn.execute("ALTER TABLE indexing_tasks ADD COLUMN session_id TEXT DEFAULT 'default'")
+            self._conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
         # Note: legacy 'upload_' prefix migration removed.
         # Filenames are stored as-is (original browser filename) since the
         # internal storage path already uses a UUID prefix for uniqueness.
@@ -163,12 +177,12 @@ class DatabaseManager:
         fields = [
             "id", "filename", "original_path", "stored_path", "extracted_text_path",
             "file_type", "file_size", "word_count", "unique_words", "char_count",
-            "line_count", "sha256", "extracted_text", "created_at"
+            "line_count", "sha256", "extracted_text", "created_at", "session_id"
         ]
         vals = [
             doc.id, doc.filename, doc.original_path, doc.stored_path, doc.extracted_text_path,
             doc.file_type, doc.file_size, doc.word_count, doc.unique_words, doc.char_count,
-            doc.line_count, doc.sha256, extracted_text, doc.created_at
+            doc.line_count, doc.sha256, extracted_text, doc.created_at, doc.session_id
         ]
 
         if "original_filename" in cols:
@@ -187,17 +201,17 @@ class DatabaseManager:
         )
         self._conn.commit()
 
-    def get_all_documents(self) -> list[Document]:
+    def get_all_documents(self, session_id: str = "default") -> list[Document]:
         """Return all documents ordered by most recent first."""
         rows = self._conn.execute(
-            "SELECT * FROM documents ORDER BY created_at DESC"
+            "SELECT * FROM documents WHERE session_id = ? ORDER BY created_at DESC", (session_id,)
         ).fetchall()
         return [self._row_to_document(r) for r in rows]
 
-    def get_document_by_id(self, doc_id: str) -> Optional[Document]:
+    def get_document_by_id(self, doc_id: str, session_id: str = "default") -> Optional[Document]:
         """Fetch a single document by its UUID."""
         row = self._conn.execute(
-            "SELECT * FROM documents WHERE id = ?", (doc_id,)
+            "SELECT * FROM documents WHERE id = ? AND session_id = ?", (doc_id, session_id)
         ).fetchone()
         return self._row_to_document(row) if row else None
 
@@ -208,43 +222,43 @@ class DatabaseManager:
         ).fetchone()
         return row["extracted_text"] if row else ""
 
-    def get_recent_documents(self, limit: int = 10) -> list[Document]:
+    def get_recent_documents(self, limit: int = 10, session_id: str = "default") -> list[Document]:
         """Return the N most recently added documents."""
         rows = self._conn.execute(
-            "SELECT * FROM documents ORDER BY created_at DESC LIMIT ?", (limit,)
+            "SELECT * FROM documents WHERE session_id = ? ORDER BY created_at DESC LIMIT ?", (session_id, limit)
         ).fetchall()
         return [self._row_to_document(r) for r in rows]
 
-    def delete_document(self, doc_id: str) -> bool:
+    def delete_document(self, doc_id: str, session_id: str = "default") -> bool:
         """Delete a document record. Returns True if a row was deleted."""
         cursor = self._conn.execute(
-            "DELETE FROM documents WHERE id = ?", (doc_id,)
+            "DELETE FROM documents WHERE id = ? AND session_id = ?", (doc_id, session_id)
         )
         self._conn.commit()
         return cursor.rowcount > 0
 
-    def get_total_words(self) -> int:
+    def get_total_words(self, session_id: str = "default") -> int:
         """Sum of word counts across all documents."""
         row = self._conn.execute(
-            "SELECT COALESCE(SUM(word_count), 0) as total FROM documents"
+            "SELECT COALESCE(SUM(word_count), 0) as total FROM documents WHERE session_id = ?", (session_id,)
         ).fetchone()
         return row["total"]
 
-    def get_total_storage(self) -> int:
+    def get_total_storage(self, session_id: str = "default") -> int:
         """Sum of file sizes across all documents."""
         row = self._conn.execute(
-            "SELECT COALESCE(SUM(file_size), 0) as total FROM documents"
+            "SELECT COALESCE(SUM(file_size), 0) as total FROM documents WHERE session_id = ?", (session_id,)
         ).fetchone()
         return row["total"]
 
-    def get_document_count(self) -> int:
+    def get_document_count(self, session_id: str = "default") -> int:
         """Total number of documents."""
         row = self._conn.execute(
-            "SELECT COUNT(*) as cnt FROM documents"
+            "SELECT COUNT(*) as cnt FROM documents WHERE session_id = ?", (session_id,)
         ).fetchone()
         return row["cnt"]
 
-    def search_content(self, query: str) -> list[tuple[str, str, str, str]]:
+    def search_content(self, query: str, session_id: str = "default") -> list[tuple[str, str, str, str]]:
         """
         Basic content search using SQLite LIKE.
         Returns list of (id, filename, file_type, extracted_text).
@@ -280,14 +294,14 @@ class DatabaseManager:
         )
         self._conn.commit()
 
-    def get_document_by_path(self, original_path: str) -> Optional[Document]:
+    def get_document_by_path(self, original_path: str, session_id: str = "default") -> Optional[Document]:
         """Fetch a single document by its original source path."""
         row = self._conn.execute(
-            "SELECT * FROM documents WHERE original_path = ?", (original_path,)
+            "SELECT * FROM documents WHERE original_path = ? AND session_id = ?", (original_path, session_id)
         ).fetchone()
         return self._row_to_document(row) if row else None
 
-    def check_duplicate(self, original_path: str, sha256: str) -> str:
+    def check_duplicate(self, original_path: str, sha256: str, session_id: str = "default") -> str:
         """
         Check if a document already exists by path and hash.
         Returns:
@@ -297,7 +311,7 @@ class DatabaseManager:
             'new': if neither path nor hash match
         """
         row_path = self._conn.execute(
-            "SELECT id, sha256 FROM documents WHERE original_path = ?", (original_path,)
+            "SELECT id, sha256 FROM documents WHERE original_path = ? AND session_id = ?", (original_path, session_id)
         ).fetchone()
         if row_path:
             if row_path["sha256"] == sha256:
@@ -306,7 +320,7 @@ class DatabaseManager:
                 return "update"
 
         row_hash = self._conn.execute(
-            "SELECT id FROM documents WHERE sha256 = ?", (sha256,)
+            "SELECT id FROM documents WHERE sha256 = ? AND session_id = ?", (sha256, session_id)
         ).fetchone()
         if row_hash:
             return "skip_hash"
@@ -348,6 +362,7 @@ class DatabaseManager:
             created_at=row["created_at"],
             original_filename=row["original_filename"] if "original_filename" in row.keys() else row["filename"],
             stored_filename=row["stored_filename"] if "stored_filename" in row.keys() else "",
+            session_id=row["session_id"] if "session_id" in row.keys() else "default",
         )
 
     def close(self):
@@ -405,19 +420,25 @@ class DatabaseManager:
         self._conn.execute("DELETE FROM chat_history")
         self._conn.commit()
 
+    def delete_all_documents_for_session(self, session_id: str) -> None:
+        """Clear all documents for a specific session."""
+        self._conn.execute("DELETE FROM documents WHERE session_id = ?", (session_id,))
+        self._conn.execute("DELETE FROM indexing_tasks WHERE session_id = ?", (session_id,))
+        self._conn.commit()
+
     # ── Indexing Task Queue ───────────────────────────────────────────
 
-    def create_indexing_task(self, task_id: str, total_files: int) -> None:
+    def create_indexing_task(self, task_id: str, total_files: int, session_id: str = "default") -> None:
         """Create a new indexing task."""
         from datetime import datetime
         now = datetime.now().isoformat()
         self._conn.execute(
             """
             INSERT INTO indexing_tasks (id, status, total_files, completed,
-                successful, failed, created_at, updated_at)
-            VALUES (?, 'pending', ?, 0, 0, 0, ?, ?)
+                successful, failed, created_at, updated_at, session_id)
+            VALUES (?, 'pending', ?, 0, 0, 0, ?, ?, ?)
             """,
-            (task_id, total_files, now, now),
+            (task_id, total_files, now, now, session_id),
         )
         self._conn.commit()
 
