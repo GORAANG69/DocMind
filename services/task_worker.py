@@ -57,6 +57,7 @@ def _worker_loop(stop_event: threading.Event) -> None:
         temp_path = Path(file_rec["temp_path"])
         original  = file_rec["original_filename"]
         rel_path  = file_rec.get("relative_path", "")
+        session_id = file_rec.get("session_id", "default")
 
         log.info("Worker: indexing %s (file_id=%s task=%s)", original, file_id, task_id)
 
@@ -68,6 +69,7 @@ def _worker_loop(stop_event: threading.Event) -> None:
                 temp_path,
                 original_path=orig_path_hint,
                 original_filename=original,
+                session_id=session_id,
             )
 
             if doc is None:

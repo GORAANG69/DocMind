@@ -120,6 +120,7 @@ class DatabaseManager:
                 relative_path TEXT DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'pending',
                 error TEXT DEFAULT '',
+                session_id TEXT DEFAULT 'default',
                 FOREIGN KEY (task_id) REFERENCES indexing_tasks(id)
             );
 
@@ -165,6 +166,12 @@ class DatabaseManager:
 
         try:
             self._conn.execute("ALTER TABLE indexing_tasks ADD COLUMN skipped INTEGER DEFAULT 0")
+            self._conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
+        try:
+            self._conn.execute("ALTER TABLE indexing_task_files ADD COLUMN session_id TEXT DEFAULT 'default'")
             self._conn.commit()
         except sqlite3.OperationalError:
             pass
@@ -455,15 +462,16 @@ class DatabaseManager:
         original_filename: str,
         temp_path: str,
         relative_path: str = "",
+        session_id: str = "default",
     ) -> None:
         """Add a file record to an indexing task."""
         self._conn.execute(
             """
             INSERT INTO indexing_task_files
-                (task_id, original_filename, temp_path, relative_path, status)
-            VALUES (?, ?, ?, ?, 'pending')
+                (task_id, original_filename, temp_path, relative_path, status, session_id)
+            VALUES (?, ?, ?, ?, 'pending', ?)
             """,
-            (task_id, original_filename, temp_path, relative_path),
+            (task_id, original_filename, temp_path, relative_path, session_id),
         )
         self._conn.commit()
 
@@ -477,7 +485,7 @@ class DatabaseManager:
         row = self._conn.execute(
             """
             SELECT itf.id, itf.task_id, itf.original_filename,
-                   itf.temp_path, itf.relative_path
+                   itf.temp_path, itf.relative_path, itf.session_id
             FROM indexing_task_files itf
             JOIN indexing_tasks it ON itf.task_id = it.id
             WHERE itf.status = 'pending'

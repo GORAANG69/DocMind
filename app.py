@@ -595,6 +595,7 @@ async def upload_async(files: List[UploadFile] = File(...), x_session_id: str = 
                 original_filename=safe_name,
                 temp_path=str(dest),
                 relative_path=rel_path,
+                session_id=x_session_id,
             )
             saved_count += 1
         except Exception as exc:
