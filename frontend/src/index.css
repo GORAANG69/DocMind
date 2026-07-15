@@ -494,6 +494,7 @@ button {
 
 .result-card {
   transition: transform 0.2s, box-shadow 0.2s;
+  color: var(--text-primary);
 }
 
 .result-card:hover {

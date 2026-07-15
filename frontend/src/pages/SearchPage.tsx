@@ -438,7 +438,7 @@ const SearchPage = () => {
                 <div
                   key={result.doc_id}
                   className="card result-card"
-                  style={{ padding: 0, marginBottom: '1rem', overflow: 'hidden' }}
+                  style={{ padding: 0, marginBottom: '1rem', overflow: 'hidden', color: 'var(--text-primary)' }}
                 >
                   {/* Card Header — always visible */}
                   <div
@@ -460,9 +460,9 @@ const SearchPage = () => {
 
                     <div style={{ flex: 1, minWidth: 0 }}>
                       {/* Filename row */}
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.4rem', flexWrap: 'wrap' }}>
-                        {getFileIcon(result.file_type, result.filename)}
-                        <span style={{ fontWeight: 600, fontSize: '1rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.4rem', flexWrap: 'nowrap', overflow: 'hidden' }}>
+                        <span style={{ flexShrink: 0 }}>{getFileIcon(result.file_type, result.filename)}</span>
+                        <span style={{ fontWeight: 600, fontSize: '1rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-primary)', flex: 1, minWidth: 0 }}>
                           {result.filename || result.original_filename}
                         </span>
                       </div>
