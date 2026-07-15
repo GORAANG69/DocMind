@@ -120,8 +120,10 @@ async def upload_document(file: UploadFile = File(...)):
         with open(temp_file_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
             
-        # Import file using standard document service
-        doc = doc_service.import_file(temp_file_path)
+        # Import file using standard document service.
+        # Pass the *original browser filename* so it is recorded correctly
+        # in the DB even if the temp file path differs.
+        doc = doc_service.import_file(temp_file_path, original_filename=file.filename)
         
         # Clean up temp file and its directory
         if temp_file_path.exists():
@@ -173,7 +175,7 @@ async def upload_multiple_documents(files: List[UploadFile] = File(...)):
             with open(temp_file_path, "wb") as f:
                 shutil.copyfileobj(file.file, f)
                 
-            doc = doc_service.import_file(temp_file_path)
+            doc = doc_service.import_file(temp_file_path, original_filename=file.filename)
             
             if temp_file_path.exists():
                 temp_file_path.unlink()
@@ -344,7 +346,7 @@ def search_documents(
     q: str = Query(..., description="Query keyword or exact phrase"),
     case_sensitive: bool = Query(False),
     whole_word: bool = Query(False),
-    exact_phrase: bool = Query(True)
+    exact_phrase: bool = Query(False)
 ):
     """Search for query occurrences across all document files.
 

@@ -39,7 +39,12 @@ class DocumentService:
                 hasher.update(chunk)
         return hasher.hexdigest()
 
-    def import_file(self, source_path: Path, original_path: Optional[str] = None) -> Optional[Document]:
+    def import_file(
+        self,
+        source_path: Path,
+        original_path: Optional[str] = None,
+        original_filename: Optional[str] = None,
+    ) -> Optional[Document]:
         """
         Import a single file into DocMind.
 
@@ -49,6 +54,16 @@ class DocumentService:
         4. Extract text
         5. Compute statistics
         6. Save to database
+
+        Args:
+            source_path: Path to the file on disk (may be a temp file).
+            original_path: Original filesystem path to use as the duplicate-
+                detection key.  Defaults to ``str(source_path)``.
+            original_filename: The clean display name to store in the database.
+                Provide this when the source_path is a temp file (e.g. an
+                UploadFile saved to a UUID temp dir) so the real filename is
+                preserved.  Defaults to the basename of source_path with any
+                leading ``upload_`` prefix stripped.
 
         Returns the created Document, or None if skipped as a duplicate.
         Raises ValueError on unsupported/corrupt files.
@@ -78,17 +93,20 @@ class DocumentService:
         doc_id = str(uuid.uuid4())
         ext = source_path.suffix.lower()
 
-        # Determine original name vs internal storage name (prefixed with upload_)
-        name = source_path.name
-        if name.startswith("upload_"):
-            original_filename = name[7:]
-            stored_filename = name
+        # Determine the clean display name.  If the caller supplies one, use it
+        # directly (this is the common case for browser uploads where source_path
+        # is a UUID-prefixed temp file).  Otherwise derive it from the source
+        # path, stripping any legacy upload_ prefix.
+        if original_filename:
+            clean_name = Path(original_filename).name  # guard against path traversal
         else:
-            original_filename = name
-            stored_filename = f"upload_{name}"
+            name = source_path.name
+            clean_name = name[7:] if name.startswith("upload_") else name
 
+        stored_filename = f"upload_{clean_name}"
         stored_path = self._upload_dir / f"{doc_id}_{stored_filename}"
         text_path = self._text_dir / f"{doc_id}.txt"
+
 
         # Copy file
         shutil.copy2(str(source_path), str(stored_path))
@@ -106,7 +124,7 @@ class DocumentService:
         # Build document
         doc = Document(
             id=doc_id,
-            filename=original_filename,
+            filename=clean_name,
             original_path=orig_path_str,
             stored_path=str(stored_path),
             extracted_text_path=str(text_path),
@@ -117,7 +135,7 @@ class DocumentService:
             char_count=stats["char_count"],
             line_count=stats["line_count"],
             sha256=sha256,
-            original_filename=original_filename,
+            original_filename=clean_name,
             stored_filename=stored_filename,
         )
 

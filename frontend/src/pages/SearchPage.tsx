@@ -79,6 +79,38 @@ function loadSession<T>(key: string, fallback: T): T {
   }
 }
 
+/**
+ * Load cached search results, but ONLY if every item in the array has the
+ * current grouped shape (doc_id + pages array).  If anything looks like the
+ * old flat per-page format (no pages field), discard the whole cache so the
+ * component never tries to call .map() on undefined and crash.
+ */
+function loadGroupedResults(): GroupedSearchResult[] {
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY_RESULTS);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    // Validate shape: every entry must have doc_id and pages/sheets arrays
+    const isValid = parsed.every(
+      (r: any) =>
+        r &&
+        typeof r.doc_id === 'string' &&
+        Array.isArray(r.pages) &&
+        Array.isArray(r.sheets)
+    );
+    if (!isValid) {
+      // Stale format — nuke the cache
+      sessionStorage.removeItem(SESSION_KEY_RESULTS);
+      return [];
+    }
+    return parsed as GroupedSearchResult[];
+  } catch {
+    sessionStorage.removeItem(SESSION_KEY_RESULTS);
+    return [];
+  }
+}
+
 // ─── File icon helper ─────────────────────────────────────────────────────────
 
 function getFileIcon(fileType: string, filename?: string) {
@@ -115,9 +147,11 @@ const SearchPage = () => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef  = useRef<HTMLInputElement>(null);
 
-  // Restore from sessionStorage on first mount
+  // Restore from sessionStorage on first mount.
+  // loadGroupedResults() validates the cached shape — old flat-format results
+  // are discarded rather than crash the render loop.
   const [query,    setQuery]    = useState<string>(() => loadSession(SESSION_KEY_QUERY, ''));
-  const [results,  setResults]  = useState<GroupedSearchResult[]>(() => loadSession(SESSION_KEY_RESULTS, []));
+  const [results,  setResults]  = useState<GroupedSearchResult[]>(loadGroupedResults);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(loadSession<string[]>(SESSION_KEY_EXPANDED, [])));
   const [searched, setSearched] = useState(() => loadSession(SESSION_KEY_QUERY, '') !== '');
   const [loading,  setLoading]  = useState(false);
@@ -391,10 +425,14 @@ const SearchPage = () => {
             )}
 
             {results.map(result => {
+              // Always treat pages/sheets as arrays — guards against any
+              // residual cache entries that slipped through loadGroupedResults.
+              const pages   = Array.isArray(result.pages)  ? result.pages  : [];
+              const sheets  = Array.isArray(result.sheets) ? result.sheets : [];
               const isExpanded = expanded.has(result.doc_id);
               const isPdf = result.file_type === '.pdf';
               const isSpreadsheet = ['.xlsx', '.xls', '.csv'].includes(result.file_type);
-              const hasSubItems = result.pages.length > 0 || result.sheets.length > 0;
+              const hasSubItems = pages.length > 0 || sheets.length > 0;
 
               return (
                 <div
@@ -438,14 +476,14 @@ const SearchPage = () => {
                         }}>
                           {result.total_matches} match{result.total_matches !== 1 ? 'es' : ''}
                         </span>
-                        {isPdf && result.pages.length > 0 && (
+                        {isPdf && pages.length > 0 && (
                           <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                            across {result.pages.length} page{result.pages.length !== 1 ? 's' : ''}
+                            across {pages.length} page{pages.length !== 1 ? 's' : ''}
                           </span>
                         )}
-                        {isSpreadsheet && result.sheets.length > 0 && (
+                        {isSpreadsheet && sheets.length > 0 && (
                           <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                            in {result.sheets.length} cell{result.sheets.length !== 1 ? 's' : ''}
+                            in {sheets.length} cell{sheets.length !== 1 ? 's' : ''}
                           </span>
                         )}
                       </div>
@@ -473,13 +511,13 @@ const SearchPage = () => {
                   {isExpanded && hasSubItems && (
                     <div style={{ borderTop: '1px solid var(--border-color)', backgroundColor: 'var(--bg-primary)' }}>
                       {/* PDF pages */}
-                      {result.pages.map((page, i) => (
+                      {pages.map((page, i) => (
                         <div
                           key={i}
                           onClick={() => handleOpenResult(result.doc_id, page.page_number)}
                           style={{
                             padding: '0.85rem 1.5rem 0.85rem 3.25rem',
-                            borderBottom: i < result.pages.length - 1 || result.sheets.length > 0 ? '1px solid var(--border-color)' : 'none',
+                            borderBottom: i < pages.length - 1 || sheets.length > 0 ? '1px solid var(--border-color)' : 'none',
                             cursor: 'pointer',
                             transition: 'background-color 0.15s',
                           }}
@@ -499,19 +537,19 @@ const SearchPage = () => {
                             </span>
                           </div>
                           <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-                            <HighlightedSnippet snippet={page.snippet} query={query} />
+                            <HighlightedSnippet snippet={page.snippet ?? ''} query={query} />
                           </div>
                         </div>
                       ))}
 
                       {/* Spreadsheet cells */}
-                      {result.sheets.map((sheet, i) => (
+                      {sheets.map((sheet, i) => (
                         <div
                           key={i}
                           onClick={() => handleOpenResult(result.doc_id)}
                           style={{
                             padding: '0.85rem 1.5rem 0.85rem 3.25rem',
-                            borderBottom: i < result.sheets.length - 1 ? '1px solid var(--border-color)' : 'none',
+                            borderBottom: i < sheets.length - 1 ? '1px solid var(--border-color)' : 'none',
                             cursor: 'pointer',
                             transition: 'background-color 0.15s',
                           }}
@@ -534,7 +572,7 @@ const SearchPage = () => {
                             </span>
                           </div>
                           <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-                            <HighlightedSnippet snippet={sheet.snippet} query={query} />
+                            <HighlightedSnippet snippet={sheet.snippet ?? ''} query={query} />
                           </div>
                         </div>
                       ))}

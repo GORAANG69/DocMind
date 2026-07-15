@@ -64,7 +64,11 @@ def _worker_loop(stop_event: threading.Event) -> None:
             # Use relative_path as the original_path key so duplicates are
             # detected correctly when re-uploading the same folder.
             orig_path_hint = rel_path if rel_path else str(temp_path)
-            doc = doc_service.import_file(temp_path, original_path=orig_path_hint)
+            doc = doc_service.import_file(
+                temp_path,
+                original_path=orig_path_hint,
+                original_filename=original,
+            )
 
             if doc is None:
                 log.info("Worker: %s skipped (duplicate)", original)
