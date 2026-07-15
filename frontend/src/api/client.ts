@@ -22,6 +22,7 @@ export interface TaskProgress {
   total_files: number;
   completed: number;
   successful: number;
+  skipped: number;
   failed: number;
   files: Array<{ original_filename: string; status: string; error: string }>;
 }

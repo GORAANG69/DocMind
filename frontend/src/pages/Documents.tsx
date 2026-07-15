@@ -27,11 +27,11 @@ const Documents = () => {
 
   // Upload progress states (shared between sync and async flows)
   const [uploading,        setUploading]        = useState(false);
-  const [uploadStats,      setUploadStats]      = useState({ total: 0, completed: 0, successful: 0, failed: 0 });
+  const [uploadStats,      setUploadStats]      = useState({ total: 0, completed: 0, successful: 0, skipped: 0, failed: 0 });
   const [currentFilename,  setCurrentFilename]  = useState('');
   const [remainingTimeText,setRemainingTimeText] = useState('');
   const [failedFilesList,  setFailedFilesList]  = useState<{ name: string; reason: string }[]>([]);
-  const [uploadSummary,    setUploadSummary]    = useState<{ successful: number; failed: number } | null>(null);
+  const [uploadSummary,    setUploadSummary]    = useState<{ successful: number; skipped: number; failed: number } | null>(null);
 
   // Async task polling
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -71,9 +71,9 @@ const Documents = () => {
     }
   }, []);
 
-  const finaliseUpload = useCallback(async (successful: number, failed: number, failures: { name: string; reason: string }[]) => {
+  const finaliseUpload = useCallback(async (successful: number, skipped: number, failed: number, failures: { name: string; reason: string }[]) => {
     setFailedFilesList(failures);
-    setUploadSummary({ successful, failed });
+    setUploadSummary({ successful, skipped, failed });
     setUploading(false);
     setCurrentFilename('');
     setRemainingTimeText('');
@@ -90,7 +90,7 @@ const Documents = () => {
     setFailedFilesList([]);
     setCurrentFilename('Saving files to server…');
     setRemainingTimeText('');
-    setUploadStats({ total: files.length, completed: 0, successful: 0, failed: 0 });
+    setUploadStats({ total: files.length, completed: 0, successful: 0, skipped: 0, failed: 0 });
 
     let task: { task_id: string; total_files: number };
     try {
@@ -101,7 +101,7 @@ const Documents = () => {
       return;
     }
 
-    setUploadStats({ total: task.total_files, completed: 0, successful: 0, failed: 0 });
+    setUploadStats({ total: task.total_files, completed: 0, successful: 0, skipped: 0, failed: 0 });
     setCurrentFilename('Waiting for background worker…');
     setRemainingTimeText('Indexing in progress…');
 
@@ -112,7 +112,7 @@ const Documents = () => {
       try {
         const progress: TaskProgress = await ApiClient.getTaskProgress(task.task_id);
 
-        const { total_files, completed, successful, failed, status } = progress;
+        const { total_files, completed, successful, skipped, failed, status } = progress;
 
         // Estimate remaining time
         if (completed > 0 && completed < total_files) {
@@ -128,7 +128,7 @@ const Documents = () => {
           }
         }
 
-        setUploadStats({ total: total_files, completed, successful, failed });
+        setUploadStats({ total: total_files, completed, successful, skipped, failed });
 
         const lastProcessing = progress.files
           .filter(f => f.status === 'processing' || f.status === 'done')
@@ -140,7 +140,7 @@ const Documents = () => {
           const failures = progress.files
             .filter(f => f.status === 'failed')
             .map(f => ({ name: f.original_filename, reason: f.error || 'Indexing failed' }));
-          await finaliseUpload(successful, failed, failures);
+          await finaliseUpload(successful, skipped, failed, failures);
         }
       } catch (err: any) {
         console.error('Polling error:', err);
@@ -168,9 +168,10 @@ const Documents = () => {
     setError(null);
     setUploadSummary(null);
     setFailedFilesList([]);
-    setUploadStats({ total: validFiles.length, completed: 0, successful: 0, failed: 0 });
+    setUploadStats({ total: validFiles.length, completed: 0, successful: 0, skipped: 0, failed: 0 });
 
     let successCount = 0;
+    let skipCount    = 0;
     let failCount    = 0;
     const failures: { name: string; reason: string }[] = [];
     const startTime  = Date.now();
@@ -195,8 +196,12 @@ const Documents = () => {
       }
 
       try {
-        await ApiClient.uploadDocument(file);
-        successCount++;
+        const res = await ApiClient.uploadDocument(file);
+        if (res.status === 'skipped') {
+          skipCount++;
+        } else {
+          successCount++;
+        }
       } catch (err: any) {
         failCount++;
         failures.push({ name: file.name, reason: err.message || 'Upload failed' });
@@ -206,11 +211,12 @@ const Documents = () => {
         total: validFiles.length,
         completed: i + 1,
         successful: successCount,
+        skipped: skipCount,
         failed: failCount,
       });
     }
 
-    await finaliseUpload(successCount, failCount, failures);
+    await finaliseUpload(successCount, skipCount, failCount, failures);
     setSelectedIds(new Set());
   }, [startAsyncUpload, finaliseUpload]);
 
@@ -373,6 +379,7 @@ const Documents = () => {
           </div>
           <div style={{ color: 'var(--text-primary)', marginLeft: '1.75rem', fontSize: '0.95rem' }}>
             Successfully indexed <strong>{uploadSummary.successful}</strong> document{uploadSummary.successful !== 1 ? 's' : ''}.
+            {uploadSummary.skipped > 0 && <span style={{ color: 'var(--text-secondary)' }}> · {uploadSummary.skipped} already existed (skipped).</span>}
             {uploadSummary.failed > 0 && <span style={{ color: 'var(--danger)', fontWeight: 500 }}> · {uploadSummary.failed} file{uploadSummary.failed !== 1 ? 's' : ''} failed.</span>}
           </div>
           {failedFilesList.length > 0 && (
@@ -446,6 +453,7 @@ const Documents = () => {
 
             <div style={{ display: 'flex', gap: '1.5rem', fontSize: '0.9rem' }}>
               <span style={{ color: 'var(--success)', fontWeight: 500 }}>{uploadStats.successful} successful</span>
+              {uploadStats.skipped > 0 && <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{uploadStats.skipped} skipped</span>}
               <span style={{ color: 'var(--danger)', fontWeight: 500 }}>{uploadStats.failed} failed</span>
               <span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>
                 {Math.max(0, uploadStats.total - uploadStats.completed)} remaining

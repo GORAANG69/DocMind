@@ -105,6 +105,7 @@ class DatabaseManager:
                 total_files INTEGER DEFAULT 0,
                 completed INTEGER DEFAULT 0,
                 successful INTEGER DEFAULT 0,
+                skipped INTEGER DEFAULT 0,
                 failed INTEGER DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
@@ -158,6 +159,12 @@ class DatabaseManager:
 
         try:
             self._conn.execute("ALTER TABLE indexing_tasks ADD COLUMN session_id TEXT DEFAULT 'default'")
+            self._conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
+        try:
+            self._conn.execute("ALTER TABLE indexing_tasks ADD COLUMN skipped INTEGER DEFAULT 0")
             self._conn.commit()
         except sqlite3.OperationalError:
             pass
@@ -435,8 +442,8 @@ class DatabaseManager:
         self._conn.execute(
             """
             INSERT INTO indexing_tasks (id, status, total_files, completed,
-                successful, failed, created_at, updated_at, session_id)
-            VALUES (?, 'pending', ?, 0, 0, 0, ?, ?, ?)
+                successful, skipped, failed, created_at, updated_at, session_id)
+            VALUES (?, 'pending', ?, 0, 0, 0, 0, ?, ?, ?)
             """,
             (task_id, total_files, now, now, session_id),
         )
@@ -524,6 +531,25 @@ class DatabaseManager:
             UPDATE indexing_tasks
             SET completed = completed + 1,
                 failed = failed + 1,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (self._now(), task_id),
+        )
+        self._finish_task_if_complete(task_id)
+        self._conn.commit()
+
+    def mark_file_skipped(self, file_id: int, task_id: str) -> None:
+        """Mark a file as skipped and update task counters."""
+        self._conn.execute(
+            "UPDATE indexing_task_files SET status = 'skipped' WHERE id = ?",
+            (file_id,),
+        )
+        self._conn.execute(
+            """
+            UPDATE indexing_tasks
+            SET completed = completed + 1,
+                skipped = skipped + 1,
                 updated_at = ?
             WHERE id = ?
             """,

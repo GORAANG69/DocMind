@@ -72,10 +72,10 @@ def _worker_loop(stop_event: threading.Event) -> None:
 
             if doc is None:
                 log.info("Worker: %s skipped (duplicate)", original)
+                db.mark_file_skipped(file_id, task_id)
             else:
                 log.info("Worker: %s indexed as doc_id=%s", original, doc.id)
-
-            db.mark_file_done(file_id, task_id)
+                db.mark_file_done(file_id, task_id)
 
         except Exception as exc:
             log.warning("Worker: failed to index %s: %s", original, exc)
