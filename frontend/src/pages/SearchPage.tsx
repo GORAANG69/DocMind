@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  Search as SearchIcon, FileText, ExternalLink, ChevronDown, ChevronRight,
+  Search as SearchIcon, FileText, ExternalLink,
   Clock, X, Trash2, FileSpreadsheet, Code, Table
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -44,7 +44,6 @@ interface SearchHistoryEntry {
 const SESSION_KEY_QUERY   = 'docmind_search_query';
 const SESSION_KEY_RESULTS = 'docmind_search_results';
 const SESSION_KEY_SCROLL  = 'docmind_search_scroll';
-const SESSION_KEY_EXPANDED = 'docmind_search_expanded';
 const LOCAL_KEY_HISTORY   = 'docmind_search_history';
 const MAX_HISTORY         = 10;
 
@@ -152,7 +151,6 @@ const SearchPage = () => {
   // are discarded rather than crash the render loop.
   const [query,    setQuery]    = useState<string>(() => loadSession(SESSION_KEY_QUERY, ''));
   const [results,  setResults]  = useState<GroupedSearchResult[]>(loadGroupedResults);
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(loadSession<string[]>(SESSION_KEY_EXPANDED, [])));
   const [searched, setSearched] = useState(() => loadSession(SESSION_KEY_QUERY, '') !== '');
   const [loading,  setLoading]  = useState(false);
   const [error,    setError]    = useState<string | null>(null);
@@ -171,9 +169,7 @@ const SearchPage = () => {
     sessionStorage.setItem(SESSION_KEY_RESULTS, JSON.stringify(results));
   }, [results]);
 
-  useEffect(() => {
-    sessionStorage.setItem(SESSION_KEY_EXPANDED, JSON.stringify([...expanded]));
-  }, [expanded]);
+
 
   // Save scroll position on unmount, restore on mount
   useEffect(() => {
@@ -217,7 +213,6 @@ const SearchPage = () => {
       const data = await ApiClient.search(q);
       const grouped: GroupedSearchResult[] = Array.isArray(data) ? data : [];
       setResults(grouped);
-      setExpanded(new Set()); // collapse all cards on new search
       // Persist to history
       pushHistory(q);
       setHistory(loadHistory());
@@ -257,14 +252,6 @@ const SearchPage = () => {
     setShowHistory(false);
   };
 
-  const toggleExpanded = (docId: string) => {
-    setExpanded(prev => {
-      const next = new Set(prev);
-      if (next.has(docId)) next.delete(docId);
-      else next.add(docId);
-      return next;
-    });
-  };
 
   const handleOpenResult = (docId: string, pageNumber?: number) => {
     const params = new URLSearchParams({ query, from: 'search' });
@@ -427,37 +414,27 @@ const SearchPage = () => {
             {results.map(result => {
               // Always treat pages/sheets as arrays — guards against any
               // residual cache entries that slipped through loadGroupedResults.
-              const pages   = Array.isArray(result.pages)  ? result.pages  : [];
-              const sheets  = Array.isArray(result.sheets) ? result.sheets : [];
-              const isExpanded = expanded.has(result.doc_id);
-              const isPdf = result.file_type === '.pdf';
+              const pages  = Array.isArray(result.pages)  ? result.pages  : [];
+              const sheets = Array.isArray(result.sheets) ? result.sheets : [];
+              const isPdf         = result.file_type === '.pdf';
               const isSpreadsheet = ['.xlsx', '.xls', '.csv'].includes(result.file_type);
-              const hasSubItems = pages.length > 0 || sheets.length > 0;
 
               return (
                 <div
                   key={result.doc_id}
                   className="card result-card"
-                  style={{ padding: 0, marginBottom: '1rem', overflow: 'hidden', color: 'var(--text-primary)' }}
+                  style={{ padding: 0, marginBottom: '1rem', overflow: 'hidden', color: 'var(--text-primary)', cursor: 'pointer' }}
+                  onClick={() => handleOpenResult(result.doc_id)}
                 >
-                  {/* Card Header — always visible */}
+                  {/* Card — static, always fully visible, no expand/collapse */}
                   <div
                     style={{
                       padding: '1.25rem 1.5rem',
                       display: 'flex',
-                      alignItems: 'flex-start',
+                      alignItems: 'center',
                       gap: '1rem',
-                      cursor: hasSubItems ? 'pointer' : 'default',
                     }}
-                    onClick={() => hasSubItems ? toggleExpanded(result.doc_id) : handleOpenResult(result.doc_id)}
                   >
-                    {/* Expand arrow for multi-page docs */}
-                    {hasSubItems && (
-                      <div style={{ paddingTop: '2px', color: 'var(--text-secondary)', flexShrink: 0 }}>
-                        {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                      </div>
-                    )}
-
                     <div style={{ flex: 1, minWidth: 0 }}>
                       {/* Filename row */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.4rem', flexWrap: 'nowrap', overflow: 'hidden' }}>
@@ -486,14 +463,13 @@ const SearchPage = () => {
                             in {sheets.length} cell{sheets.length !== 1 ? 's' : ''}
                           </span>
                         )}
+                        {/* Snippet for single-file docs with no pages/sheets breakdown */}
+                        {pages.length === 0 && sheets.length === 0 && result.snippet && (
+                          <span style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                            — <HighlightedSnippet snippet={result.snippet} query={query} />
+                          </span>
+                        )}
                       </div>
-
-                      {/* Snippet for non-paged docs */}
-                      {!hasSubItems && result.snippet && (
-                        <div style={{ marginTop: '0.75rem', fontSize: '0.875rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-                          <HighlightedSnippet snippet={result.snippet} query={query} />
-                        </div>
-                      )}
                     </div>
 
                     {/* Open button — always on the right */}
@@ -506,81 +482,11 @@ const SearchPage = () => {
                       <ExternalLink size={13} /> Open
                     </button>
                   </div>
-
-                  {/* Expanded Page/Sheet matches */}
-                  {isExpanded && hasSubItems && (
-                    <div style={{ borderTop: '1px solid var(--border-color)', backgroundColor: 'var(--bg-primary)' }}>
-                      {/* PDF pages */}
-                      {pages.map((page, i) => (
-                        <div
-                          key={i}
-                          onClick={() => handleOpenResult(result.doc_id, page.page_number)}
-                          style={{
-                            padding: '0.85rem 1.5rem 0.85rem 3.25rem',
-                            borderBottom: i < pages.length - 1 || sheets.length > 0 ? '1px solid var(--border-color)' : 'none',
-                            cursor: 'pointer',
-                            transition: 'background-color 0.15s',
-                          }}
-                          onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'var(--bg-translucent-hover)')}
-                          onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
-                        >
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.4rem' }}>
-                            <span style={{ fontSize: '0.8rem', color: 'var(--accent-primary)', fontWeight: 600, minWidth: '60px' }}>
-                              Page {page.page_number}
-                            </span>
-                            <span style={{
-                              fontSize: '0.75rem', color: 'var(--success)',
-                              backgroundColor: 'rgba(16,185,129,0.12)',
-                              padding: '0.15rem 0.5rem', borderRadius: '4px', fontWeight: 600
-                            }}>
-                              {page.match_count} match{page.match_count !== 1 ? 'es' : ''}
-                            </span>
-                          </div>
-                          <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-                            <HighlightedSnippet snippet={page.snippet ?? ''} query={query} />
-                          </div>
-                        </div>
-                      ))}
-
-                      {/* Spreadsheet cells */}
-                      {sheets.map((sheet, i) => (
-                        <div
-                          key={i}
-                          onClick={() => handleOpenResult(result.doc_id)}
-                          style={{
-                            padding: '0.85rem 1.5rem 0.85rem 3.25rem',
-                            borderBottom: i < sheets.length - 1 ? '1px solid var(--border-color)' : 'none',
-                            cursor: 'pointer',
-                            transition: 'background-color 0.15s',
-                          }}
-                          onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'var(--bg-translucent-hover)')}
-                          onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
-                        >
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.4rem' }}>
-                            <span style={{ fontSize: '0.8rem', color: 'var(--accent-primary)', fontWeight: 600 }}>
-                              {sheet.sheet_name}
-                            </span>
-                            <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontFamily: 'monospace' }}>
-                              {sheet.cell_ref}
-                            </span>
-                            <span style={{
-                              fontSize: '0.75rem', color: 'var(--success)',
-                              backgroundColor: 'rgba(16,185,129,0.12)',
-                              padding: '0.15rem 0.5rem', borderRadius: '4px', fontWeight: 600
-                            }}>
-                              {sheet.match_count} match{sheet.match_count !== 1 ? 'es' : ''}
-                            </span>
-                          </div>
-                          <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-                            <HighlightedSnippet snippet={sheet.snippet ?? ''} query={query} />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
                 </div>
               );
+
             })}
+
           </>
         )}
       </div>
