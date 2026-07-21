@@ -287,9 +287,9 @@ class DatabaseManager:
             f"""
             SELECT id, {filename_col} AS filename, file_type, extracted_text
             FROM documents
-            WHERE lower(extracted_text) LIKE ?
+            WHERE lower(extracted_text) LIKE ? AND session_id = ?
             """,
-            (f"%{query.lower()}%",),
+            (f"%{query.lower()}%", session_id),
         ).fetchall()
         return [(r["id"], r["filename"], r["file_type"], r["extracted_text"]) for r in rows]
 

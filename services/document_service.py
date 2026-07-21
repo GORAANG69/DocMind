@@ -142,6 +142,9 @@ class DocumentService:
         )
 
         self._db.insert_document(doc, extracted_text)
+
+
+
         return doc
 
     # ── Delete ────────────────────────────────────────────────────────
@@ -152,15 +155,30 @@ class DocumentService:
         if doc is None:
             return False
 
+        import time
         # Remove stored file
         stored = Path(doc.stored_path)
         if stored.exists():
-            stored.unlink()
+            for attempt in range(5):
+                try:
+                    stored.unlink()
+                    break
+                except PermissionError:
+                    if attempt == 4:
+                        raise
+                    time.sleep(0.2)
 
         # Remove extracted text file
         text = Path(doc.extracted_text_path)
         if text.exists():
-            text.unlink()
+            for attempt in range(5):
+                try:
+                    text.unlink()
+                    break
+                except PermissionError:
+                    if attempt == 4:
+                        raise
+                    time.sleep(0.2)
 
         return self._db.delete_document(doc_id, session_id)
 

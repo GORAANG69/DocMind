@@ -23,7 +23,6 @@ from gui.dashboard import DashboardPage
 from gui.document_library import DocumentLibrary
 from gui.document_viewer import DocumentViewer
 from gui.search_panel import SearchPanel
-from gui.statistics_panel import StatisticsPanel
 from gui.workers import ImportWorker
 from parsers.parser_factory import SUPPORTED_EXTENSIONS
 
@@ -67,8 +66,7 @@ class MainWindow(QMainWindow):
     PAGE_DASHBOARD = 0
     PAGE_LIBRARY = 1
     PAGE_SEARCH = 2
-    PAGE_STATISTICS = 3
-    PAGE_VIEWER = 4
+    PAGE_VIEWER = 3
 
     def __init__(self):
         super().__init__()
@@ -118,7 +116,6 @@ class MainWindow(QMainWindow):
             ("🏠", "Dashboard"),
             ("📚", "Library"),
             ("🔍", "Search"),
-            ("📊", "Statistics"),
         ]
         for icon, text in nav_items:
             btn = NavButton(icon, text)
@@ -142,14 +139,12 @@ class MainWindow(QMainWindow):
         self._dashboard = DashboardPage()
         self._library = DocumentLibrary()
         self._search = SearchPanel()
-        self._statistics = StatisticsPanel()
         self._viewer = DocumentViewer()
 
         self._stack.addWidget(self._dashboard)    # 0
         self._stack.addWidget(self._library)      # 1
         self._stack.addWidget(self._search)       # 2
-        self._stack.addWidget(self._statistics)   # 3
-        self._stack.addWidget(self._viewer)       # 4
+        self._stack.addWidget(self._viewer)       # 3
 
         main_layout.addWidget(self._stack, 1)
 
@@ -199,14 +194,13 @@ class MainWindow(QMainWindow):
     def _connect_signals(self):
         # Dashboard
         self._dashboard.select_folder_requested.connect(self._open_folder_dialog)
-        self._dashboard.refresh_folder_requested.connect(self._refresh_folder)
+        self._dashboard.upload_files_requested.connect(self._open_files_dialog)
         self._dashboard.document_selected.connect(self._open_document)
 
         # Library
         self._library.select_folder_requested.connect(self._open_folder_dialog)
-        self._library.refresh_folder_requested.connect(self._refresh_folder)
+        self._library.upload_files_requested.connect(self._open_files_dialog)
         self._library.document_open.connect(self._open_document)
-        self._library.document_stats.connect(self._open_stats)
         self._library.document_deleted.connect(self._on_doc_deleted)
 
         # Search
@@ -216,8 +210,7 @@ class MainWindow(QMainWindow):
         self._viewer.back_requested.connect(lambda: self._navigate(self.PAGE_LIBRARY))
         self._viewer.delete_requested.connect(self._on_viewer_delete_requested)
 
-        # Statistics
-        self._statistics.back_requested.connect(lambda: self._navigate(self.PAGE_LIBRARY))
+        # Statistics removed
 
     # ── Navigation ────────────────────────────────────────────────────
 
@@ -237,57 +230,26 @@ class MainWindow(QMainWindow):
                 self._library.refresh()
             case self.PAGE_SEARCH:
                 self._search.focus_search()
-            case self.PAGE_STATISTICS:
-                self._statistics.refresh()
 
     # ── Folder selection and scanning ─────────────────────────────────
 
     def _open_folder_dialog(self):
-        dir_path = QFileDialog.getExistingDirectory(self, "Select Research Folder")
+        dir_path = QFileDialog.getExistingDirectory(self, "Upload Folder")
         if dir_path:
             # Save folder path to DB settings
             self._library._service._db.set_setting("last_folder", dir_path)
             self._scan_and_import_folder(Path(dir_path))
 
-    def _refresh_folder(self):
-        last_folder = self._library._service._db.get_setting("last_folder")
-        if not last_folder:
-            QMessageBox.warning(
-                self, "No Folder Selected",
-                "No research folder has been selected yet. Please click 'Select Folder' first."
-            )
-            return
-        path = Path(last_folder)
-        if not path.exists() or not path.is_dir():
-            QMessageBox.warning(
-                self, "Folder Not Found",
-                f"The previously selected folder does not exist:\n\n{last_folder}\n\nPlease select another folder."
-            )
-            return
-
-        # ── Detect documents whose source files are now missing ───────────
-        all_docs = self._library._service.get_all_documents()
-        missing_docs = [
-            doc for doc in all_docs
-            if not Path(doc.original_path).exists() and not Path(doc.stored_path).exists()
-        ]
-        for doc in missing_docs:
-            reply = QMessageBox(self)
-            reply.setWindowTitle("Missing File Detected")
-            reply.setText(
-                "The following indexed document no longer exists on disk.\n"
-                "Would you like to remove it from the library?"
-            )
-            reply.setInformativeText(doc.filename)
-            remove_btn = reply.addButton("Remove", QMessageBox.ButtonRole.AcceptRole)
-            keep_btn = reply.addButton("Keep Metadata", QMessageBox.ButtonRole.RejectRole)
-            reply.setDefaultButton(keep_btn)
-            reply.exec()
-            if reply.clickedButton() is remove_btn:
-                self._library._service.delete_document(doc.id)
-                self._on_doc_deleted(doc.id)
-
-        self._scan_and_import_folder(path, is_refresh=True)
+    def _open_files_dialog(self):
+        file_paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Select Documents",
+            "",
+            "Documents (*.pdf *.xls *.xlsx *.docx *.doc *.txt *.md *.csv *.log *.json *.xml *.html)"
+        )
+        if file_paths:
+            paths = [Path(p) for p in file_paths]
+            self._start_import(paths)
 
     def _scan_and_import_folder(self, folder_path: Path, is_refresh: bool = False):
         """Start background import by passing the raw directory path to the worker.
@@ -318,6 +280,8 @@ class MainWindow(QMainWindow):
         self._progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
         self._progress_dialog.setMinimumDuration(0)
         self._progress_dialog.setValue(0)
+        
+        self._import_user_cancelled = False
         self._progress_dialog.canceled.connect(self._cancel_import)
 
         self._start_time = time.time()
@@ -329,6 +293,7 @@ class MainWindow(QMainWindow):
         self._import_worker.start()
 
     def _cancel_import(self):
+        self._import_user_cancelled = True
         if self._import_worker:
             self._import_worker.cancel()
 
@@ -357,6 +322,7 @@ class MainWindow(QMainWindow):
 
     def _on_import_done(self, success: int, errors: int, skipped: int):
         if self._progress_dialog:
+            self._progress_dialog.canceled.disconnect(self._cancel_import)
             self._progress_dialog.close()
             self._progress_dialog = None
 
@@ -366,7 +332,7 @@ class MainWindow(QMainWindow):
         page = self._stack.currentIndex()
         self._navigate(page)
 
-        if self._import_worker and self._import_worker._is_cancelled:
+        if self._import_user_cancelled:
             QMessageBox.information(self, "Import Cancelled", "Folder indexing was cancelled by user.")
             return
 
@@ -425,10 +391,6 @@ class MainWindow(QMainWindow):
         self._stack.setCurrentIndex(self.PAGE_VIEWER)
         for btn in self._nav_buttons:
             btn.setChecked(False)
-
-    def _open_stats(self, doc_id: str):
-        self._statistics.load_document(doc_id)
-        self._navigate(self.PAGE_STATISTICS)
 
     # ── Drag & Drop ───────────────────────────────────────────────────
 

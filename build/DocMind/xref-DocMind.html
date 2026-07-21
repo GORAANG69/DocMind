@@ -176,7 +176,6 @@ imports:
  &#8226;   <a href="#gui.document_viewer">gui.document_viewer</a>
  &#8226;   <a href="#gui.main_window">gui.main_window</a>
  &#8226;   <a href="#gui.search_panel">gui.search_panel</a>
- &#8226;   <a href="#gui.statistics_panel">gui.statistics_panel</a>
  &#8226;   <a href="#gui.workers">gui.workers</a>
  &#8226;   <a href="#hashlib">hashlib</a>
  &#8226;   <a href="#heapq">heapq</a>
@@ -531,7 +530,6 @@ imported by:
  &#8226;   <a href="#gui.document_viewer">gui.document_viewer</a>
  &#8226;   <a href="#gui.main_window">gui.main_window</a>
  &#8226;   <a href="#gui.search_panel">gui.search_panel</a>
- &#8226;   <a href="#gui.statistics_panel">gui.statistics_panel</a>
  &#8226;   <a href="#gui.workers">gui.workers</a>
  &#8226;   <a href="#main.py">main.py</a>
 
@@ -587,7 +585,6 @@ imported by:
  &#8226;   <a href="#gui.document_viewer">gui.document_viewer</a>
  &#8226;   <a href="#gui.main_window">gui.main_window</a>
  &#8226;   <a href="#gui.search_panel">gui.search_panel</a>
- &#8226;   <a href="#gui.statistics_panel">gui.statistics_panel</a>
  &#8226;   <a href="#main.py">main.py</a>
 
   </div>
@@ -690,7 +687,6 @@ imported by:
  &#8226;   <a href="#gui.document_viewer">gui.document_viewer</a>
  &#8226;   <a href="#gui.main_window">gui.main_window</a>
  &#8226;   <a href="#gui.search_panel">gui.search_panel</a>
- &#8226;   <a href="#gui.statistics_panel">gui.statistics_panel</a>
  &#8226;   <a href="#main.py">main.py</a>
  &#8226;   <a href="#utils.startup_checks">utils.startup_checks</a>
 
@@ -3703,6 +3699,7 @@ imports:
 imported by:
     <a href="#importlib.metadata">importlib.metadata</a>
  &#8226;   <a href="#main.py">main.py</a>
+ &#8226;   <a href="#parsers.csv_parser">parsers.csv_parser</a>
  &#8226;   <a href="#services.document_service">services.document_service</a>
 
   </div>
@@ -3781,6 +3778,7 @@ imported by:
 imports:
     <a href="#database">database</a>
  &#8226;   <a href="#database.models">database.models</a>
+ &#8226;   <a href="#datetime">datetime</a>
  &#8226;   <a href="#pathlib">pathlib</a>
  &#8226;   <a href="#sqlite3">sqlite3</a>
  &#8226;   <a href="#sys">sys</a>
@@ -3791,7 +3789,8 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#main.py">main.py</a>
+    <a href="#gui.search_panel">gui.search_panel</a>
+ &#8226;   <a href="#main.py">main.py</a>
  &#8226;   <a href="#services.document_service">services.document_service</a>
  &#8226;   <a href="#services.search_service">services.search_service</a>
 
@@ -3877,6 +3876,7 @@ imported by:
  &#8226;   <a href="#PyQt6.QtWidgets">PyQt6.QtWidgets</a>
  &#8226;   <a href="#_strptime">_strptime</a>
  &#8226;   <a href="#calendar">calendar</a>
+ &#8226;   <a href="#database.db_manager">database.db_manager</a>
  &#8226;   <a href="#database.models">database.models</a>
  &#8226;   <a href="#docx.comments">docx.comments</a>
  &#8226;   <a href="#docx.opc.coreprops">docx.opc.coreprops</a>
@@ -9144,7 +9144,8 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#main.py">main.py</a>
+    <a href="#gui.document_viewer">gui.document_viewer</a>
+ &#8226;   <a href="#main.py">main.py</a>
  &#8226;   <a href="#parsers.pdf_parser">parsers.pdf_parser</a>
 
   </div>
@@ -9453,7 +9454,6 @@ imported by:
  &#8226;   <a href="#gui.document_viewer">gui.document_viewer</a>
  &#8226;   <a href="#gui.main_window">gui.main_window</a>
  &#8226;   <a href="#gui.search_panel">gui.search_panel</a>
- &#8226;   <a href="#gui.statistics_panel">gui.statistics_panel</a>
  &#8226;   <a href="#gui.workers">gui.workers</a>
  &#8226;   <a href="#main.py">main.py</a>
 
@@ -9515,7 +9515,9 @@ imports:
  &#8226;   <a href="#PyQt6.QtGui">PyQt6.QtGui</a>
  &#8226;   <a href="#PyQt6.QtWidgets">PyQt6.QtWidgets</a>
  &#8226;   <a href="#database.models">database.models</a>
+ &#8226;   <a href="#fitz">fitz</a>
  &#8226;   <a href="#gui">gui</a>
+ &#8226;   <a href="#pathlib">pathlib</a>
  &#8226;   <a href="#services.document_service">services.document_service</a>
 
   </div>
@@ -9541,7 +9543,6 @@ imports:
  &#8226;   <a href="#gui.document_library">gui.document_library</a>
  &#8226;   <a href="#gui.document_viewer">gui.document_viewer</a>
  &#8226;   <a href="#gui.search_panel">gui.search_panel</a>
- &#8226;   <a href="#gui.statistics_panel">gui.statistics_panel</a>
  &#8226;   <a href="#gui.workers">gui.workers</a>
  &#8226;   <a href="#parsers.parser_factory">parsers.parser_factory</a>
  &#8226;   <a href="#pathlib">pathlib</a>
@@ -9564,31 +9565,9 @@ imports:
     <a href="#PyQt6.QtCore">PyQt6.QtCore</a>
  &#8226;   <a href="#PyQt6.QtGui">PyQt6.QtGui</a>
  &#8226;   <a href="#PyQt6.QtWidgets">PyQt6.QtWidgets</a>
+ &#8226;   <a href="#database.db_manager">database.db_manager</a>
  &#8226;   <a href="#gui">gui</a>
  &#8226;   <a href="#services.search_service">services.search_service</a>
-
-  </div>
-  <div class="import">
-imported by:
-    <a href="#gui.main_window">gui.main_window</a>
- &#8226;   <a href="#main.py">main.py</a>
-
-  </div>
-
-</div>
-
-<div class="node">
-  <a name="gui.statistics_panel"></a>
-  <a target="code" href="///C:/Users/goraa/.gemini/antigravity-ide/scratch/DocMind/gui/statistics_panel.py" type="text/plain"><tt>gui.statistics_panel</tt></a>
-<span class="moduletype">SourceModule</span>  <div class="import">
-imports:
-    <a href="#PyQt6.QtCore">PyQt6.QtCore</a>
- &#8226;   <a href="#PyQt6.QtGui">PyQt6.QtGui</a>
- &#8226;   <a href="#PyQt6.QtWidgets">PyQt6.QtWidgets</a>
- &#8226;   <a href="#gui">gui</a>
- &#8226;   <a href="#pathlib">pathlib</a>
- &#8226;   <a href="#services.document_service">services.document_service</a>
- &#8226;   <a href="#services.statistics_service">services.statistics_service</a>
 
   </div>
   <div class="import">
@@ -9913,7 +9892,6 @@ imports:
  &#8226;   <a href="#importlib">importlib</a>
  &#8226;   <a href="#importlib._bootstrap">importlib._bootstrap</a>
  &#8226;   <a href="#importlib._bootstrap_external">importlib._bootstrap_external</a>
- &#8226;   <a href="#importlib.machinery">importlib.machinery</a>
  &#8226;   <a href="#sys">sys</a>
  &#8226;   <a href="#warnings">warnings</a>
 
@@ -10049,8 +10027,7 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#importlib">importlib</a>
- &#8226;   <a href="#importlib.abc">importlib.abc</a>
+    <a href="#importlib.abc">importlib.abc</a>
  &#8226;   <a href="#inspect">inspect</a>
  &#8226;   <a href="#pkgutil">pkgutil</a>
  &#8226;   <a href="#py_compile">py_compile</a>
@@ -10645,6 +10622,7 @@ imported by:
     <a href="#json.decoder">json.decoder</a>
  &#8226;   <a href="#json.encoder">json.encoder</a>
  &#8226;   <a href="#json.scanner">json.scanner</a>
+ &#8226;   <a href="#parsers.json_parser">parsers.json_parser</a>
  &#8226;   <a href="#pymupdf">pymupdf</a>
 
   </div>
@@ -17603,7 +17581,9 @@ imported by:
 imported by:
     <a href="#main.py">main.py</a>
  &#8226;   <a href="#parsers.base_parser">parsers.base_parser</a>
+ &#8226;   <a href="#parsers.csv_parser">parsers.csv_parser</a>
  &#8226;   <a href="#parsers.docx_parser">parsers.docx_parser</a>
+ &#8226;   <a href="#parsers.json_parser">parsers.json_parser</a>
  &#8226;   <a href="#parsers.parser_factory">parsers.parser_factory</a>
  &#8226;   <a href="#parsers.pdf_parser">parsers.pdf_parser</a>
  &#8226;   <a href="#parsers.txt_parser">parsers.txt_parser</a>
@@ -17627,12 +17607,33 @@ imports:
   <div class="import">
 imported by:
     <a href="#main.py">main.py</a>
+ &#8226;   <a href="#parsers.csv_parser">parsers.csv_parser</a>
  &#8226;   <a href="#parsers.docx_parser">parsers.docx_parser</a>
+ &#8226;   <a href="#parsers.json_parser">parsers.json_parser</a>
  &#8226;   <a href="#parsers.parser_factory">parsers.parser_factory</a>
  &#8226;   <a href="#parsers.pdf_parser">parsers.pdf_parser</a>
  &#8226;   <a href="#parsers.txt_parser">parsers.txt_parser</a>
  &#8226;   <a href="#parsers.xls_parser">parsers.xls_parser</a>
  &#8226;   <a href="#parsers.xlsx_parser">parsers.xlsx_parser</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="parsers.csv_parser"></a>
+  <a target="code" href="///C:/Users/goraa/.gemini/antigravity-ide/scratch/DocMind/parsers/csv_parser.py" type="text/plain"><tt>parsers.csv_parser</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#csv">csv</a>
+ &#8226;   <a href="#parsers">parsers</a>
+ &#8226;   <a href="#parsers.base_parser">parsers.base_parser</a>
+ &#8226;   <a href="#pathlib">pathlib</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#parsers.parser_factory">parsers.parser_factory</a>
 
   </div>
 
@@ -17659,13 +17660,34 @@ imported by:
 </div>
 
 <div class="node">
+  <a name="parsers.json_parser"></a>
+  <a target="code" href="///C:/Users/goraa/.gemini/antigravity-ide/scratch/DocMind/parsers/json_parser.py" type="text/plain"><tt>parsers.json_parser</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#json">json</a>
+ &#8226;   <a href="#parsers">parsers</a>
+ &#8226;   <a href="#parsers.base_parser">parsers.base_parser</a>
+ &#8226;   <a href="#pathlib">pathlib</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#parsers.parser_factory">parsers.parser_factory</a>
+
+  </div>
+
+</div>
+
+<div class="node">
   <a name="parsers.parser_factory"></a>
   <a target="code" href="///C:/Users/goraa/.gemini/antigravity-ide/scratch/DocMind/parsers/parser_factory.py" type="text/plain"><tt>parsers.parser_factory</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
     <a href="#parsers">parsers</a>
  &#8226;   <a href="#parsers.base_parser">parsers.base_parser</a>
+ &#8226;   <a href="#parsers.csv_parser">parsers.csv_parser</a>
  &#8226;   <a href="#parsers.docx_parser">parsers.docx_parser</a>
+ &#8226;   <a href="#parsers.json_parser">parsers.json_parser</a>
  &#8226;   <a href="#parsers.pdf_parser">parsers.pdf_parser</a>
  &#8226;   <a href="#parsers.txt_parser">parsers.txt_parser</a>
  &#8226;   <a href="#parsers.xls_parser">parsers.xls_parser</a>
@@ -17789,8 +17811,8 @@ imports:
 imported by:
     <a href="#database.db_manager">database.db_manager</a>
  &#8226;   <a href="#gui.document_library">gui.document_library</a>
+ &#8226;   <a href="#gui.document_viewer">gui.document_viewer</a>
  &#8226;   <a href="#gui.main_window">gui.main_window</a>
- &#8226;   <a href="#gui.statistics_panel">gui.statistics_panel</a>
  &#8226;   <a href="#gui.workers">gui.workers</a>
  &#8226;   <a href="#importlib.metadata">importlib.metadata</a>
  &#8226;   <a href="#importlib.resources._common">importlib.resources._common</a>
@@ -17798,7 +17820,9 @@ imported by:
  &#8226;   <a href="#importlib.resources.readers">importlib.resources.readers</a>
  &#8226;   <a href="#main.py">main.py</a>
  &#8226;   <a href="#parsers.base_parser">parsers.base_parser</a>
+ &#8226;   <a href="#parsers.csv_parser">parsers.csv_parser</a>
  &#8226;   <a href="#parsers.docx_parser">parsers.docx_parser</a>
+ &#8226;   <a href="#parsers.json_parser">parsers.json_parser</a>
  &#8226;   <a href="#parsers.parser_factory">parsers.parser_factory</a>
  &#8226;   <a href="#parsers.pdf_parser">parsers.pdf_parser</a>
  &#8226;   <a href="#parsers.txt_parser">parsers.txt_parser</a>
@@ -18885,6 +18909,7 @@ imports:
  &#8226;   <a href="#services">services</a>
  &#8226;   <a href="#services.statistics_service">services.statistics_service</a>
  &#8226;   <a href="#shutil">shutil</a>
+ &#8226;   <a href="#time">time</a>
  &#8226;   <a href="#typing">typing</a>
  &#8226;   <a href="#utils.app_paths">utils.app_paths</a>
  &#8226;   <a href="#uuid">uuid</a>
@@ -18895,7 +18920,6 @@ imported by:
     <a href="#gui.dashboard">gui.dashboard</a>
  &#8226;   <a href="#gui.document_library">gui.document_library</a>
  &#8226;   <a href="#gui.document_viewer">gui.document_viewer</a>
- &#8226;   <a href="#gui.statistics_panel">gui.statistics_panel</a>
  &#8226;   <a href="#gui.workers">gui.workers</a>
  &#8226;   <a href="#main.py">main.py</a>
 
@@ -18936,8 +18960,7 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#gui.statistics_panel">gui.statistics_panel</a>
- &#8226;   <a href="#main.py">main.py</a>
+    <a href="#main.py">main.py</a>
  &#8226;   <a href="#services.document_service">services.document_service</a>
 
   </div>
@@ -19842,6 +19865,7 @@ imported by:
  &#8226;   <a href="#pymupdf._apply_pages">pymupdf._apply_pages</a>
  &#8226;   <a href="#queue">queue</a>
  &#8226;   <a href="#random">random</a>
+ &#8226;   <a href="#services.document_service">services.document_service</a>
  &#8226;   <a href="#socketserver">socketserver</a>
  &#8226;   <a href="#sqlite3.dbapi2">sqlite3.dbapi2</a>
  &#8226;   <a href="#ssl">ssl</a>

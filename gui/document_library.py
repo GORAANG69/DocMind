@@ -30,12 +30,11 @@ class DocumentLibrary(QWidget):
     """Sortable, filterable document table."""
 
     select_folder_requested = pyqtSignal()
-    refresh_folder_requested = pyqtSignal()
+    upload_files_requested = pyqtSignal()
     document_open = pyqtSignal(str)        # doc_id
-    document_stats = pyqtSignal(str)       # doc_id
     document_deleted = pyqtSignal(str)     # doc_id
 
-    _COLUMNS = ["Name", "Type", "Size", "Date Added", "Words"]
+    _COLUMNS = ["", "Name", "Type", "Size", "Date Added", "Words"]
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -56,16 +55,7 @@ class DocumentLibrary(QWidget):
         header.addWidget(title)
         header.addStretch()
 
-        refresh_btn = QPushButton("  Refresh Folder")
-        refresh_btn.setObjectName("secondaryButton")
-        refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        refresh_btn.setFont(QFont("Segoe UI", 12, QFont.Weight.DemiBold))
-        refresh_btn.setMinimumHeight(42)
-        refresh_btn.setMinimumWidth(160)
-        refresh_btn.clicked.connect(self.refresh_folder_requested.emit)
-        header.addWidget(refresh_btn)
-
-        select_folder_btn = QPushButton("  Select Folder")
+        select_folder_btn = QPushButton("  Upload Folder")
         select_folder_btn.setObjectName("primaryButton")
         select_folder_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         select_folder_btn.setFont(QFont("Segoe UI", 12, QFont.Weight.DemiBold))
@@ -73,6 +63,16 @@ class DocumentLibrary(QWidget):
         select_folder_btn.setMinimumWidth(160)
         select_folder_btn.clicked.connect(self.select_folder_requested.emit)
         header.addWidget(select_folder_btn)
+        
+        upload_files_btn = QPushButton("  Upload Files")
+        upload_files_btn.setObjectName("primaryButton")
+        upload_files_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        upload_files_btn.setFont(QFont("Segoe UI", 12, QFont.Weight.DemiBold))
+        upload_files_btn.setMinimumHeight(42)
+        upload_files_btn.setMinimumWidth(160)
+        upload_files_btn.clicked.connect(self.upload_files_requested.emit)
+        header.addWidget(upload_files_btn)
+
         layout.addLayout(header)
 
         # ── Toolbar ───────────────────────────────────────────────────
@@ -106,6 +106,16 @@ class DocumentLibrary(QWidget):
         )
         self._delete_btn.clicked.connect(self._delete_selected)
         toolbar.addWidget(self._delete_btn)
+
+        from PyQt6.QtWidgets import QCheckBox
+        self._select_all_chk = QCheckBox("Select All")
+        self._select_all_chk.setStyleSheet(
+            """
+            QCheckBox { color: #8b949e; font-size: 13px; font-weight: bold; }
+            """
+        )
+        self._select_all_chk.stateChanged.connect(self._toggle_all)
+        toolbar.addWidget(self._select_all_chk)
 
         self._filter_input = QLineEdit()
         self._filter_input.setPlaceholderText("🔍  Filter by filename...")
@@ -176,7 +186,7 @@ class DocumentLibrary(QWidget):
         self._table.setColumnCount(len(self._COLUMNS))
         self._table.setHorizontalHeaderLabels(self._COLUMNS)
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._table.setAlternatingRowColors(True)
         self._table.verticalHeader().setVisible(False)
@@ -184,12 +194,13 @@ class DocumentLibrary(QWidget):
         self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._table.customContextMenuRequested.connect(self._show_context_menu)
         self._table.doubleClicked.connect(self._on_double_click)
-        self._table.itemSelectionChanged.connect(self._on_selection_changed)
+        self._table.itemChanged.connect(self._on_item_changed)
 
         header_view = self._table.horizontalHeader()
         header_view.setStretchLastSection(True)
-        header_view.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for i in range(1, len(self._COLUMNS)):
+        header_view.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header_view.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        for i in range(2, len(self._COLUMNS)):
             header_view.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
 
         self._table.setStyleSheet(
@@ -230,7 +241,7 @@ class DocumentLibrary(QWidget):
         # Empty state
         self._empty_label = QLabel(
             "📂  No documents indexed yet.\n\n"
-            "Click \"Select Folder\" to begin indexing research papers."
+            "Click \"Select Folder\" or \"Upload Files\" to begin indexing research papers."
         )
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_label.setFont(QFont("Segoe UI", 14))
@@ -248,20 +259,40 @@ class DocumentLibrary(QWidget):
         """Reload all documents from the database."""
         self._docs = self._service.get_all_documents()
         self._apply_sort(self._sort_combo.currentText())
-        self._on_selection_changed()  # update delete button state
+        self._update_delete_btn()
 
-    def _on_selection_changed(self):
-        """Enable/disable delete button based on row selection."""
-        has_selection = len(self._table.selectedItems()) > 0
-        self._delete_btn.setEnabled(has_selection)
+    def _toggle_all(self, state: int):
+        self._table.setUpdatesEnabled(False)
+        self._table.blockSignals(True)
+        for row in range(self._table.rowCount()):
+            item = self._table.item(row, 0)
+            if item and not self._table.isRowHidden(row):
+                item.setCheckState(Qt.CheckState(state))
+        self._table.blockSignals(False)
+        self._table.setUpdatesEnabled(True)
+        self._update_delete_btn()
+
+    def _on_item_changed(self, item: QTableWidgetItem):
+        if item.column() == 0:
+            self._update_delete_btn()
+
+    def _update_delete_btn(self):
+        any_checked = any(
+            self._table.item(row, 0).checkState() == Qt.CheckState.Checked
+            for row in range(self._table.rowCount())
+            if self._table.item(row, 0)
+        )
+        self._delete_btn.setEnabled(any_checked)
 
     def _populate_table(self, docs: list[Document]):
         """Fill the table with the given document list."""
+        self._table.setUpdatesEnabled(False)
         self._table.setRowCount(0)
 
         if not docs:
             self._table.setVisible(False)
             self._empty_label.setVisible(True)
+            self._table.setUpdatesEnabled(True)
             return
 
         self._table.setVisible(True)
@@ -273,21 +304,29 @@ class DocumentLibrary(QWidget):
         for row, doc in enumerate(docs):
             icon = icon_map.get(doc.file_type, "📄")
 
+            chk_item = QTableWidgetItem()
+            chk_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+            chk_item.setCheckState(Qt.CheckState.Unchecked)
+            chk_item.setData(Qt.ItemDataRole.UserRole, doc.id)
+            self._table.setItem(row, 0, chk_item)
+
             name_item = QTableWidgetItem(f"{icon}  {doc.filename}")
             name_item.setData(Qt.ItemDataRole.UserRole, doc.id)
-            self._table.setItem(row, 0, name_item)
+            self._table.setItem(row, 1, name_item)
 
-            self._table.setItem(row, 1, QTableWidgetItem(doc.file_type.upper().lstrip(".")))
-            self._table.setItem(row, 2, QTableWidgetItem(doc.file_size_display))
+            self._table.setItem(row, 2, QTableWidgetItem(doc.file_type.upper().lstrip(".")))
+            self._table.setItem(row, 3, QTableWidgetItem(doc.file_size_display))
 
             try:
                 dt = datetime.fromisoformat(doc.created_at)
                 date_str = dt.strftime("%b %d, %Y  %H:%M")
             except Exception:
                 date_str = doc.created_at
-            self._table.setItem(row, 3, QTableWidgetItem(date_str))
+            self._table.setItem(row, 4, QTableWidgetItem(date_str))
 
-            self._table.setItem(row, 4, QTableWidgetItem(f"{doc.word_count:,}"))
+            self._table.setItem(row, 5, QTableWidgetItem(f"{doc.word_count:,}"))
+            
+        self._table.setUpdatesEnabled(True)
 
     # ── Sorting ───────────────────────────────────────────────────────
 
@@ -313,10 +352,12 @@ class DocumentLibrary(QWidget):
 
     def _apply_filter(self, text: str):
         query = text.lower().strip()
+        self._table.setUpdatesEnabled(False)
         for row in range(self._table.rowCount()):
-            item = self._table.item(row, 0)
+            item = self._table.item(row, 1)
             visible = query in item.text().lower() if item else True
             self._table.setRowHidden(row, not visible)
+        self._table.setUpdatesEnabled(True)
 
     # ── Context menu ──────────────────────────────────────────────────
 
@@ -325,7 +366,7 @@ class DocumentLibrary(QWidget):
         if row < 0:
             return
 
-        item = self._table.item(row, 0)
+        item = self._table.item(row, 1)
         doc_id = item.data(Qt.ItemDataRole.UserRole) if item else None
         if not doc_id:
             return
@@ -353,10 +394,6 @@ class DocumentLibrary(QWidget):
         open_action.triggered.connect(lambda: self.document_open.emit(doc_id))
         menu.addAction(open_action)
 
-        stats_action = QAction("📊  View Statistics", self)
-        stats_action.triggered.connect(lambda: self.document_stats.emit(doc_id))
-        menu.addAction(stats_action)
-
         menu.addSeparator()
 
         delete_action = QAction("🗑️  Delete", self)
@@ -367,34 +404,43 @@ class DocumentLibrary(QWidget):
 
     def _on_double_click(self, index):
         row = index.row()
-        item = self._table.item(row, 0)
+        item = self._table.item(row, 1)
         if item:
             doc_id = item.data(Qt.ItemDataRole.UserRole)
             if doc_id:
                 self.document_open.emit(doc_id)
 
     def _delete_selected(self):
-        """Delete the currently selected row (called from toolbar button or Delete key)."""
-        rows = self._table.selectedItems()
-        if not rows:
-            return
-        row = self._table.currentRow()
-        item = self._table.item(row, 0)
-        if not item:
-            return
-        doc_id = item.data(Qt.ItemDataRole.UserRole)
-        if doc_id:
-            self._delete_document(doc_id)
+        """Delete the currently checked rows (called from toolbar button or Delete key)."""
+        doc_ids = []
+        for row in range(self._table.rowCount()):
+            item = self._table.item(row, 0)
+            if item and item.checkState() == Qt.CheckState.Checked:
+                doc_id = item.data(Qt.ItemDataRole.UserRole)
+                if doc_id:
+                    doc_ids.append(doc_id)
+                    
+        if doc_ids:
+            self._delete_documents(doc_ids)
 
     def _delete_document(self, doc_id: str):
-        """Show confirmation dialog then delete document and all associated data."""
-        doc = self._service.get_document(doc_id)
-        if doc is None:
+        """Helper for single document deletion (e.g., from context menu)."""
+        self._delete_documents([doc_id])
+
+    def _delete_documents(self, doc_ids: list[str]):
+        """Show confirmation dialog then delete multiple documents and all associated data."""
+        docs = []
+        for doc_id in doc_ids:
+            doc = self._service.get_document(doc_id)
+            if doc:
+                docs.append(doc)
+                
+        if not docs:
             return
 
         # ── Confirmation dialog ───────────────────────────────────────
         dlg = QDialog(self)
-        dlg.setWindowTitle("Delete Document")
+        dlg.setWindowTitle("Delete Documents" if len(docs) > 1 else "Delete Document")
         dlg.setFixedWidth(440)
         dlg.setStyleSheet(
             """
@@ -420,7 +466,7 @@ class DocumentLibrary(QWidget):
         icon_lbl.setStyleSheet("background: transparent;")
         title_row.addWidget(icon_lbl)
 
-        title_lbl = QLabel("Delete Document")
+        title_lbl = QLabel("Delete Documents" if len(docs) > 1 else "Delete Document")
         title_lbl.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
         title_lbl.setStyleSheet("color: #f85149; background: transparent;")
         title_row.addWidget(title_lbl)
@@ -428,14 +474,24 @@ class DocumentLibrary(QWidget):
         dlg_layout.addLayout(title_row)
 
         # Message
-        msg_lbl = QLabel("Are you sure you want to permanently remove this document from DocMind?")
+        if len(docs) == 1:
+            msg_text = "Are you sure you want to permanently remove this document from DocMind?"
+        else:
+            msg_text = f"Are you sure you want to permanently remove {len(docs)} documents from DocMind?"
+            
+        msg_lbl = QLabel(msg_text)
         msg_lbl.setWordWrap(True)
         msg_lbl.setFont(QFont("Segoe UI", 13))
         msg_lbl.setStyleSheet("color: #8b949e; background: transparent;")
         dlg_layout.addWidget(msg_lbl)
 
-        # Filename
-        fname_lbl = QLabel(doc.filename)
+        # Filename(s)
+        if len(docs) == 1:
+            fname_text = docs[0].filename
+        else:
+            fname_text = f"{docs[0].filename} and {len(docs) - 1} other(s)"
+            
+        fname_lbl = QLabel(fname_text)
         fname_lbl.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
         fname_lbl.setStyleSheet(
             "color: #e6edf3; background: #21262d; border: 1px solid #30363d;"
@@ -493,29 +549,25 @@ class DocumentLibrary(QWidget):
             return
 
         # ── Perform deletion ──────────────────────────────────────────
-        try:
-            success = self._service.delete_document(doc_id)
-        except PermissionError:
-            QMessageBox.critical(
-                self, "Deletion Failed",
-                f"Cannot delete '{doc.filename}'.\n\n"
-                "The file appears to be open or locked by another program.\n"
-                "Please close it and try again."
-            )
-            return
-        except OSError as exc:
-            QMessageBox.critical(
-                self, "Deletion Failed",
-                f"Could not delete '{doc.filename}':\n\n{exc}"
-            )
-            return
+        deleted_count = 0
+        for doc in docs:
+            try:
+                success = self._service.delete_document(doc.id)
+                if success:
+                    self.document_deleted.emit(doc.id)
+                    deleted_count += 1
+            except PermissionError:
+                QMessageBox.critical(
+                    self, "Deletion Failed",
+                    f"Cannot delete '{doc.filename}'.\n\n"
+                    "The file appears to be open or locked by another program.\n"
+                    "Please close it and try again."
+                )
+            except OSError as exc:
+                QMessageBox.critical(
+                    self, "Deletion Failed",
+                    f"Could not delete '{doc.filename}':\n\n{exc}"
+                )
 
-        if not success:
-            QMessageBox.warning(
-                self, "Not Found",
-                "The document record was not found in the database."
-            )
-            return
-
-        self.document_deleted.emit(doc_id)
-        self.refresh()
+        if deleted_count > 0:
+            self.refresh()

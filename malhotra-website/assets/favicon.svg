@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <rect width="32" height="32" rx="6" fill="#0f1c38"/>
+  <!-- Truck body -->
+  <rect x="1" y="16" width="18" height="9" rx="1.5" fill="#c9922a"/>
+  <rect x="19" y="19" width="9" height="6" rx="1" fill="#c9922a" opacity="0.85"/>
+  <polygon points="19,19 19,16 25,16 28,19" fill="#c9922a" opacity="0.9"/>
+  <!-- Wheels -->
+  <circle cx="7" cy="26" r="3" fill="#0f1c38" stroke="#c9922a" stroke-width="1.5"/>
+  <circle cx="15" cy="26" r="3" fill="#0f1c38" stroke="#c9922a" stroke-width="1.5"/>
+  <circle cx="25" cy="26" r="2.5" fill="#0f1c38" stroke="#c9922a" stroke-width="1.5"/>
+  <!-- Mountain -->
+  <polygon points="2,15 7,7 12,15" fill="white" opacity="0.85"/>
+  <polygon points="9,15 14,9 19,15" fill="white" opacity="0.55"/>
+</svg>

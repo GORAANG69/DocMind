@@ -67,7 +67,7 @@ class DashboardPage(QWidget):
     """Main dashboard with stats, recent docs, and folder actions."""
 
     select_folder_requested = pyqtSignal()
-    refresh_folder_requested = pyqtSignal()
+    upload_files_requested = pyqtSignal()
     document_selected = pyqtSignal(str)  # doc_id
 
     def __init__(self, parent=None):
@@ -88,16 +88,7 @@ class DashboardPage(QWidget):
         header_layout.addWidget(title)
         header_layout.addStretch()
 
-        refresh_btn = QPushButton("  Refresh Folder")
-        refresh_btn.setObjectName("secondaryButton")
-        refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        refresh_btn.setFont(QFont("Segoe UI", 12, QFont.Weight.DemiBold))
-        refresh_btn.setMinimumHeight(42)
-        refresh_btn.setMinimumWidth(160)
-        refresh_btn.clicked.connect(self.refresh_folder_requested.emit)
-        header_layout.addWidget(refresh_btn)
-
-        select_folder_btn = QPushButton("  Select Folder")
+        select_folder_btn = QPushButton("  Upload Folder")
         select_folder_btn.setObjectName("primaryButton")
         select_folder_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         select_folder_btn.setFont(QFont("Segoe UI", 12, QFont.Weight.DemiBold))
@@ -105,6 +96,16 @@ class DashboardPage(QWidget):
         select_folder_btn.setMinimumWidth(160)
         select_folder_btn.clicked.connect(self.select_folder_requested.emit)
         header_layout.addWidget(select_folder_btn)
+        
+        upload_files_btn = QPushButton("  Upload Files")
+        upload_files_btn.setObjectName("primaryButton")
+        upload_files_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        upload_files_btn.setFont(QFont("Segoe UI", 12, QFont.Weight.DemiBold))
+        upload_files_btn.setMinimumHeight(42)
+        upload_files_btn.setMinimumWidth(160)
+        upload_files_btn.clicked.connect(self.upload_files_requested.emit)
+        header_layout.addWidget(upload_files_btn)
+
         layout.addLayout(header_layout)
 
         # ── Stat cards ────────────────────────────────────────────────
@@ -157,7 +158,7 @@ class DashboardPage(QWidget):
         layout.addWidget(self._recent_list, 1)
 
         # Empty state
-        self._empty_label = QLabel("No documents yet. Click 'Select Folder' to get started!")
+        self._empty_label = QLabel("No documents yet. Click 'Select Folder' or 'Upload Files' to get started!")
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_label.setFont(QFont("Segoe UI", 13))
         self._empty_label.setStyleSheet("color: #484f58; padding: 40px;")

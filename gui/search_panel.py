@@ -7,7 +7,7 @@ are expandable children.
 Search state (query + options) is persisted to SQLite settings so
 it survives application restarts.
 """
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -72,7 +72,12 @@ class SearchPanel(QWidget):
             QLineEdit:focus { border: 1px solid #58a6ff; }
             """
         )
-        self._search_input.returnPressed.connect(self._do_search)
+        self._search_debounce_timer = QTimer(self)
+        self._search_debounce_timer.setSingleShot(True)
+        self._search_debounce_timer.timeout.connect(self._do_search)
+
+        self._search_input.returnPressed.connect(self._on_return_pressed)
+        self._search_input.textChanged.connect(self._on_text_changed)
         search_row.addWidget(self._search_input, 1)
 
         search_btn = QPushButton("Search")
@@ -129,18 +134,14 @@ class SearchPanel(QWidget):
 
         # Case check
         self._case_check = QCheckBox("Case sensitive")
-        self._case_check.setStyleSheet(
-            "QCheckBox { color: #8b949e; font-size: 12px; } "
-            "QCheckBox::indicator { width: 16px; height: 16px; }"
-        )
+        self._case_check.setStyleSheet("QCheckBox { color: #8b949e; font-size: 12px; }")
+        self._case_check.toggled.connect(self._on_return_pressed)
         opts_layout.addWidget(self._case_check)
 
         # Whole word check
         self._whole_word_check = QCheckBox("Whole word")
-        self._whole_word_check.setStyleSheet(
-            "QCheckBox { color: #8b949e; font-size: 12px; } "
-            "QCheckBox::indicator { width: 16px; height: 16px; }"
-        )
+        self._whole_word_check.setStyleSheet("QCheckBox { color: #8b949e; font-size: 12px; }")
+        self._whole_word_check.toggled.connect(self._on_return_pressed)
         opts_layout.addWidget(self._whole_word_check)
 
         opts_layout.addStretch()
@@ -185,6 +186,7 @@ class SearchPanel(QWidget):
             }
             """
         )
+        self._search_mode_combo.currentTextChanged.connect(self._on_return_pressed)
         self._sort_combo.currentTextChanged.connect(self._apply_sort)
         opts_layout.addWidget(self._sort_combo)
 
@@ -260,8 +262,8 @@ class SearchPanel(QWidget):
         """Restore the last search query and options from the database, and re-run the search."""
         query = self._db.get_setting("search_last_query") or ""
         mode = self._db.get_setting("search_mode") or "Exact Phrase"
-        case_sensitive = self._db.get_setting("search_case_sensitive") == "1"
-        whole_word = self._db.get_setting("search_whole_word") == "1"
+        case_sensitive = (self._db.get_setting("search_case_sensitive") or "0") == "1"
+        whole_word = (self._db.get_setting("search_whole_word") or "0") == "1"
 
         self._search_input.setText(query)
         idx = self._search_mode_combo.findText(mode)
@@ -276,9 +278,27 @@ class SearchPanel(QWidget):
 
     # ── Search logic ──────────────────────────────────────────────────
 
+    def _on_text_changed(self, text: str):
+        if not text.strip():
+            self._search_debounce_timer.stop()
+            self._do_search()
+        else:
+            self._search_debounce_timer.stop()
+            self._search_debounce_timer.start(300)
+
+    def _on_return_pressed(self):
+        self._search_debounce_timer.stop()
+        self._do_search()
+
     def _do_search(self):
         query = self._search_input.text().strip()
         if not query:
+            self._current_results = []
+            self._results_tree.clear()
+            self._results_tree.setVisible(False)
+            self._empty_label.setVisible(True)
+            self._result_count_label.setText("0 matches")
+            self._save_search_state()
             return
 
         exact_phrase = self._search_mode_combo.currentText() == "Exact Phrase"

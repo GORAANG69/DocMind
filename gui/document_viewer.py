@@ -1,6 +1,6 @@
 """Document viewer — displays extracted text with in-document search."""
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor
+from PyQt6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor, QImage, QPixmap, QPainter, QBrush
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -10,7 +10,48 @@ from PyQt6.QtWidgets import (
     QTextEdit,
     QVBoxLayout,
     QWidget,
+    QScrollArea,
+    QStackedWidget,
 )
+
+class PdfPageWidget(QWidget):
+    def __init__(self, doc, page_num, zoom=1.5):
+        super().__init__()
+        self.doc = doc
+        self.page_num = page_num
+        self.zoom = zoom
+        self.highlights = []
+        self._pixmap = None
+        
+        import fitz
+        page = self.doc[self.page_num]
+        r = page.rect * fitz.Matrix(self.zoom, self.zoom)
+        self.setFixedSize(int(r.width), int(r.height))
+
+    def set_highlights(self, rects):
+        self.highlights = rects
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        if not self._pixmap:
+            import fitz
+            page = self.doc[self.page_num]
+            matrix = fitz.Matrix(self.zoom, self.zoom)
+            pix = page.get_pixmap(matrix=matrix)
+            fmt = QImage.Format.Format_RGBA8888 if pix.alpha else QImage.Format.Format_RGB888
+            img = QImage(pix.samples, pix.width, pix.height, pix.stride, fmt)
+            self._pixmap = QPixmap.fromImage(img)
+            
+        painter.drawPixmap(0, 0, self._pixmap)
+        
+        if self.highlights:
+            painter.setPen(Qt.PenStyle.NoPen)
+            color = QColor("#ffd33d")
+            color.setAlpha(128)
+            painter.setBrush(QBrush(color))
+            for r in self.highlights:
+                painter.drawRect(r)
 
 from database.models import Document
 from services.document_service import DocumentService
@@ -123,6 +164,7 @@ class DocumentViewer(QWidget):
             """
         )
         self._search_input.textChanged.connect(self._highlight_matches)
+        self._search_input.returnPressed.connect(self._next_match)
         search_bar.addWidget(self._search_input, 1)
 
         self._match_label = QLabel("")
@@ -146,7 +188,10 @@ class DocumentViewer(QWidget):
 
         layout.addLayout(search_bar)
 
-        # ── Text area ────────────────────────────────────────────────
+        # ── Text area / PDF Viewer stack ──────────────────────────────
+        self._viewer_stack = QStackedWidget()
+
+        # 1. Text Viewer
         self._text_edit = QTextEdit()
         self._text_edit.setReadOnly(True)
         self._text_edit.setFont(QFont("Consolas", 12))
@@ -160,21 +205,40 @@ class DocumentViewer(QWidget):
                 padding: 16px;
                 selection-background-color: #264f78;
             }
-            QScrollBar:vertical {
-                background: #0d1117;
-                width: 10px;
-                border-radius: 5px;
-            }
-            QScrollBar::handle:vertical {
-                background: #30363d;
-                border-radius: 5px;
-                min-height: 30px;
-            }
+            QScrollBar:vertical { background: #0d1117; width: 10px; border-radius: 5px; }
+            QScrollBar::handle:vertical { background: #30363d; border-radius: 5px; min-height: 30px; }
             QScrollBar::handle:vertical:hover { background: #484f58; }
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
             """
         )
-        layout.addWidget(self._text_edit, 1)
+        self._viewer_stack.addWidget(self._text_edit)
+
+        # 2. PDF Viewer
+        self._pdf_scroll_area = QScrollArea()
+        self._pdf_scroll_area.setWidgetResizable(True)
+        self._pdf_scroll_area.setStyleSheet(
+            """
+            QScrollArea {
+                background: #0d1117;
+                border: 1px solid #30363d;
+                border-radius: 10px;
+            }
+            QScrollBar:vertical { background: #0d1117; width: 10px; border-radius: 5px; }
+            QScrollBar::handle:vertical { background: #30363d; border-radius: 5px; min-height: 30px; }
+            QScrollBar::handle:vertical:hover { background: #484f58; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+            """
+        )
+        self._pdf_container = QWidget()
+        self._pdf_container.setStyleSheet("background: #0d1117;")
+        self._pdf_layout = QVBoxLayout(self._pdf_container)
+        self._pdf_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+        self._pdf_layout.setSpacing(20)
+        self._pdf_scroll_area.setWidget(self._pdf_container)
+        
+        self._viewer_stack.addWidget(self._pdf_scroll_area)
+        
+        layout.addWidget(self._viewer_stack, 1)
 
     # ── Public API ────────────────────────────────────────────────────
 
@@ -195,36 +259,57 @@ class DocumentViewer(QWidget):
         self._meta_reading.setText(f"Reading: ~{doc.reading_time_minutes} min")
         self._delete_btn.setVisible(True)
 
-        text = self._service.get_extracted_text(doc_id)
+        # Clear existing PDF widgets
+        for i in reversed(range(self._pdf_layout.count())):
+            widget = self._pdf_layout.itemAt(i).widget()
+            if widget:
+                widget.setParent(None)
+                widget.deleteLater()
         
-        # Format text depending on file type to display coordinates cleanly
-        if doc.file_type == ".pdf":
-            pages = text.split("\f")
-            formatted_parts = []
-            for idx, page_text in enumerate(pages, 1):
-                formatted_parts.append(f"--- Page {idx} ---\n{page_text}")
-            text_to_show = "\n\n".join(formatted_parts)
-        elif doc.file_type in (".xlsx", ".xls"):
-            lines = text.split("\n")
-            formatted_parts = []
-            current_sheet = None
-            for line in lines:
-                if not line.strip():
-                    continue
-                parts = line.split("\t", 2)
-                if len(parts) == 3:
-                    sh, ref, val = parts
-                    if sh != current_sheet:
-                        current_sheet = sh
-                        formatted_parts.append(f"\n=== Sheet: {current_sheet} ===")
-                    formatted_parts.append(f"[{ref}] {val}")
-            text_to_show = "\n".join(formatted_parts)
-        else:
-            text_to_show = text
-
-        self._text_edit.setPlainText(text_to_show)
+        if hasattr(self, '_pdf_doc') and self._pdf_doc:
+            self._pdf_doc.close()
+            self._pdf_doc = None
+            
+        self._text_edit.clear()
         self._search_input.clear()
         self._match_label.setText("")
+
+        # Format text depending on file type
+        if doc.file_type == ".pdf":
+            import fitz
+            from pathlib import Path
+            path = Path(doc.original_path) if Path(doc.original_path).exists() else Path(doc.stored_path)
+            
+            try:
+                self._pdf_doc = fitz.open(str(path))
+                for page_num in range(len(self._pdf_doc)):
+                    w = PdfPageWidget(self._pdf_doc, page_num, zoom=1.5)
+                    self._pdf_layout.addWidget(w)
+                self._viewer_stack.setCurrentWidget(self._pdf_scroll_area)
+            except Exception as e:
+                self._text_edit.setPlainText(f"Failed to render PDF: {e}\n\nPath: {path}")
+                self._viewer_stack.setCurrentWidget(self._text_edit)
+        else:
+            text = self._service.get_extracted_text(doc_id)
+            if doc.file_type in (".xlsx", ".xls"):
+                lines = text.split("\n")
+                formatted_parts = []
+                current_sheet = None
+                for line in lines:
+                    if not line.strip():
+                        continue
+                    parts = line.split("\t", 2)
+                    if len(parts) == 3:
+                        sh, ref, val = parts
+                        if sh != current_sheet:
+                            current_sheet = sh
+                            formatted_parts.append(f"\n=== Sheet: {current_sheet} ===")
+                        formatted_parts.append(f"[{ref}] {val}")
+                text_to_show = "\n".join(formatted_parts)
+            else:
+                text_to_show = text
+            self._text_edit.setPlainText(text_to_show)
+            self._viewer_stack.setCurrentWidget(self._text_edit)
 
         if query:
             self._search_input.setText(query)
@@ -238,11 +323,23 @@ class DocumentViewer(QWidget):
 
     def _scroll_to_text(self, target_str: str):
         """Find target string in document and scroll cursor to it."""
-        document = self._text_edit.document()
-        cursor = document.find(target_str)
-        if not cursor.isNull():
-            self._text_edit.setTextCursor(cursor)
-            self._text_edit.ensureCursorVisible()
+        if self._current_doc and self._current_doc.file_type == ".pdf":
+            # For PDF images, scroll_to_text for '--- Page X ---' isn't exact,
+            # but we can parse the page number if needed.
+            if target_str.startswith("--- Page"):
+                try:
+                    page_num = int(target_str.split()[2]) - 1
+                    if page_num < self._pdf_layout.count():
+                        w = self._pdf_layout.itemAt(page_num).widget()
+                        self._pdf_scroll_area.ensureWidgetVisible(w, 0, 0)
+                except:
+                    pass
+        else:
+            document = self._text_edit.document()
+            cursor = document.find(target_str)
+            if not cursor.isNull():
+                self._text_edit.setTextCursor(cursor)
+                self._text_edit.ensureCursorVisible()
 
     # ── In-document search ────────────────────────────────────────────
 
@@ -252,7 +349,58 @@ class DocumentViewer(QWidget):
             self.delete_requested.emit(self._current_doc.id)
 
     def _highlight_matches(self, query: str):
-        """Highlight all occurrences of query in the text."""
+        """Highlight all occurrences of query in the text or PDF."""
+        self._match_positions = []
+        self._current_match = -1
+        
+        if self._current_doc and self._current_doc.file_type == ".pdf":
+            self._highlight_pdf_matches(query)
+        else:
+            self._highlight_text_matches(query)
+
+    def _highlight_pdf_matches(self, query: str):
+        if not hasattr(self, '_pdf_doc') or not self._pdf_doc:
+            return
+
+        import fitz
+        from PyQt6.QtCore import QRectF
+
+        if not query.strip():
+            for i in range(self._pdf_layout.count()):
+                w = self._pdf_layout.itemAt(i).widget()
+                if w:
+                    w.set_highlights([])
+            self._match_label.setText("")
+            return
+
+        matrix = fitz.Matrix(1.5, 1.5)
+        for i in range(self._pdf_layout.count()):
+            w = self._pdf_layout.itemAt(i).widget()
+            if not w:
+                continue
+            
+            page = self._pdf_doc[i]
+            rects = page.search_for(query)
+            
+            if rects:
+                scaled_rects = []
+                for r in rects:
+                    sr = r * matrix
+                    scaled_rects.append(QRectF(sr.x0, sr.y0, sr.width, sr.height))
+                w.set_highlights(scaled_rects)
+                for sr in scaled_rects:
+                    self._match_positions.append((i, sr, w))
+            else:
+                w.set_highlights([])
+                
+        count = len(self._match_positions)
+        self._match_label.setText(f"{count} match{'es' if count != 1 else ''}")
+
+        if count > 0:
+            self._current_match = 0
+            self._scroll_to_match(0)
+
+    def _highlight_text_matches(self, query: str):
         # Reset formatting
         cursor = self._text_edit.textCursor()
         cursor.select(QTextCursor.SelectionType.Document)
@@ -260,9 +408,6 @@ class DocumentViewer(QWidget):
         default_fmt.setBackground(QColor("transparent"))
         cursor.setCharFormat(default_fmt)
         cursor.clearSelection()
-
-        self._match_positions = []
-        self._current_match = -1
 
         if not query.strip():
             self._match_label.setText("")
@@ -292,14 +437,24 @@ class DocumentViewer(QWidget):
     def _scroll_to_match(self, index: int):
         if not self._match_positions:
             return
-        pos = self._match_positions[index]
-        cursor = self._text_edit.textCursor()
-        cursor.setPosition(pos)
-        self._text_edit.setTextCursor(cursor)
-        self._text_edit.ensureCursorVisible()
-        self._match_label.setText(
-            f"{index + 1}/{len(self._match_positions)}"
-        )
+            
+        if self._current_doc and self._current_doc.file_type == ".pdf":
+            page_idx, rect, w = self._match_positions[index]
+            
+            scrollbar = self._pdf_scroll_area.verticalScrollBar()
+            target_y = w.y() + int(rect.y()) - self._pdf_scroll_area.viewport().height() // 2
+            scrollbar.setValue(max(0, target_y))
+            
+            self._match_label.setText(f"{index + 1}/{len(self._match_positions)}")
+        else:
+            pos = self._match_positions[index]
+            cursor = self._text_edit.textCursor()
+            cursor.setPosition(pos)
+            self._text_edit.setTextCursor(cursor)
+            self._text_edit.ensureCursorVisible()
+            self._match_label.setText(
+                f"{index + 1}/{len(self._match_positions)}"
+            )
 
     def _next_match(self):
         if not self._match_positions:
